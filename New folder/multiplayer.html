@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gift Rush: Santa vs. Rival</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a202c;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+            touch-action: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        canvas {
+            background-color: #2d3748;
+            border: 4px solid #4a5568;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            max-width: 95vw;
+            max-height: 80vh;
+        }
+        .ui-overlay {
+            position: absolute;
+            top: 20px;
+            width: 90%;
+            display: flex;
+            justify-content: space-between;
+            pointer-events: none;
+        }
+        .player-card {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 12px;
+            color: white;
+            min-width: 150px;
+            border-bottom: 4px solid transparent;
+        }
+        .p1-border { border-color: #f56565; }
+        .p2-border { border-color: #4299e1; }
+        .timer-box {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 20px;
+            border-radius: 50px;
+            color: #ecc94b;
+            font-weight: bold;
+            font-size: 1.5rem;
+            border: 2px solid #ecc94b;
+        }
+        #modal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            text-align: center;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            z-index: 100;
+            display: none;
+        }
+        .steal-popup {
+            position: absolute;
+            color: #f6ad55;
+            font-weight: bold;
+            font-size: 20px;
+            pointer-events: none;
+            animation: floatUp 1s forwards;
+        }
+        @keyframes floatUp {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(-50px); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <!-- UI Layer -->
+    <div class="ui-overlay">
+        <div class="player-card p1-border">
+            <div class="text-sm uppercase font-bold text-red-400">Santa (WASD)</div>
+            <div id="p1-score" class="text-3xl font-black">0</div>
+        </div>
+        
+        <div class="timer-box" id="timer-display">03:00</div>
+
+        <div class="player-card p2-border text-right">
+            <div class="text-sm uppercase font-bold text-blue-400">Rival (Arrows)</div>
+            <div id="p2-score" class="text-3xl font-black">0</div>
+        </div>
+    </div>
+
+    <!-- Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Modal -->
+    <div id="modal">
+        <h2 id="modal-title" class="text-4xl font-bold mb-4">Level 1</h2>
+        <p id="modal-desc" class="mb-6 text-gray-600 italic">Deliver gifts to houses. Watch out for the Rival stealing your glory!</p>
+        <button id="start-btn" class="bg-green-500 hover:bg-green-600 text-white px-8 py-3 rounded-full font-bold transition-all">START GAME</button>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalDesc = document.getElementById('modal-desc');
+    const startBtn = document.getElementById('start-btn');
+    const timerDisplay = document.getElementById('timer-display');
+    const p1ScoreDisplay = document.getElementById('p1-score');
+    const p2ScoreDisplay = document.getElementById('p2-score');
+
+    // Constants
+    const CANVAS_WIDTH = 1000;
+    const CANVAS_HEIGHT = 700;
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
+
+    const PLAYER_RADIUS = 20;
+    const HOUSE_SIZE = 50;
+    const STEAL_WINDOW = 3000; // 3 seconds to steal
+    const POINT_INCREASE_INTERVAL = 4000; // ~4 seconds
+    const COOLDOWN_DURATION = 5000; // 5 seconds house cooldown
+    const GAME_DURATION = 180; // 180 seconds
+
+    // Game State
+    let gameState = 'MENU';
+    let currentLevel = 1;
+    let timer = GAME_DURATION;
+    let lastTime = 0;
+    let pointTimer = 0;
+    let gameInterval;
+
+    let keys = {};
+    let players = [];
+    let houses = [];
+    let powerUps = [];
+    let obstacles = [];
+
+    class Player {
+        constructor(x, y, color, id, controls) {
+            this.x = x;
+            this.y = y;
+            this.color = color;
+            this.id = id;
+            this.controls = controls;
+            this.score = 0;
+            this.speed = 4;
+            this.radius = PLAYER_RADIUS;
+            this.emoji = id === 1 ? '🎅' : '👿';
+            this.boostTimer = 0;
+        }
+
+        update() {
+            let dx = 0;
+            let dy = 0;
+
+            if (keys[this.controls.up]) dy -= 1;
+            if (keys[this.controls.down]) dy += 1;
+            if (keys[this.controls.left]) dx -= 1;
+            if (keys[this.controls.right]) dx += 1;
+
+            if (dx !== 0 || dy !== 0) {
+                const mag = Math.sqrt(dx * dx + dy * dy);
+                const currentSpeed = this.boostTimer > 0 ? this.speed * 1.6 : this.speed;
+                
+                const nextX = this.x + (dx / mag) * currentSpeed;
+                const nextY = this.y + (dy / mag) * currentSpeed;
+
+                // Wall & Obstacle Collision
+                if (nextX > this.radius && nextX < CANVAS_WIDTH - this.radius && !this.checkObstacleCollision(nextX, this.y)) {
+                    this.x = nextX;
+                }
+                if (nextY > this.radius && nextY < CANVAS_HEIGHT - this.radius && !this.checkObstacleCollision(this.x, nextY)) {
+                    this.y = nextY;
+                }
+            }
+
+            if (this.boostTimer > 0) this.boostTimer -= 16.6; // approx 1 frame
+        }
+
+        checkObstacleCollision(nx, ny) {
+            for (let obs of obstacles) {
+                if (nx + this.radius > obs.x && nx - this.radius < obs.x + obs.w &&
+                    ny + this.radius > obs.y && ny - this.radius < obs.y + obs.h) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        draw() {
+            ctx.save();
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = this.color;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            ctx.font = "24px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(this.emoji, this.x, this.y);
+            
+            if (this.boostTimer > 0) {
+                ctx.strokeStyle = "yellow";
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius + 5, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+    }
+
+    class House {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.points = 10;
+            this.cooldown = 0;
+            this.lastCollectedBy = null;
+            this.lastCollectionTime = 0;
+        }
+
+        update(dt) {
+            if (this.cooldown > 0) {
+                this.cooldown -= dt;
+            }
+        }
+
+        draw() {
+            const opacity = this.cooldown > 0 ? 0.3 : 1;
+            ctx.globalAlpha = opacity;
+            
+            // House Base
+            ctx.fillStyle = "#8B4513";
+            ctx.fillRect(this.x - HOUSE_SIZE/2, this.y - HOUSE_SIZE/2, HOUSE_SIZE, HOUSE_SIZE);
+            // Roof
+            ctx.fillStyle = "#A52A2A";
+            ctx.beginPath();
+            ctx.moveTo(this.x - HOUSE_SIZE/2 - 5, this.y - HOUSE_SIZE/2);
+            ctx.lineTo(this.x, this.y - HOUSE_SIZE/2 - 25);
+            ctx.lineTo(this.x + HOUSE_SIZE/2 + 5, this.y - HOUSE_SIZE/2);
+            ctx.fill();
+
+            ctx.globalAlpha = 1;
+
+            if (this.cooldown <= 0) {
+                ctx.fillStyle = "white";
+                ctx.font = "bold 16px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(`+${this.points}`, this.x, this.y - 40);
+            } else {
+                ctx.fillStyle = "#718096";
+                ctx.font = "12px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("RECHARGING", this.x, this.y - 40);
+            }
+        }
+    }
+
+    class PowerUp {
+        constructor(x, y, type) {
+            this.x = x;
+            this.y = y;
+            this.type = type; // 'GIFT' or 'SPEED'
+            this.radius = 15;
+            this.pulse = 0;
+        }
+
+        draw() {
+            this.pulse += 0.1;
+            const s = Math.sin(this.pulse) * 3;
+            ctx.font = "24px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(this.type === 'GIFT' ? '🎁' : '⚡', this.x, this.y + s);
+        }
+    }
+
+    function initLevel(lvl) {
+        players = [
+            new Player(100, 100, '#f56565', 1, { up: 'w', down: 's', left: 'a', right: 'd' }),
+            new Player(CANVAS_WIDTH - 100, CANVAS_HEIGHT - 100, '#4299e1', 2, { up: 'arrowup', down: 'arrowdown', left: 'arrowleft', right: 'arrowright' })
+        ];
+
+        houses = [];
+        obstacles = [];
+        powerUps = [];
+        timer = GAME_DURATION;
+
+        // Level scaling
+        const houseCount = 8 + (lvl * 2);
+        for (let i = 0; i < houseCount; i++) {
+            let valid = false;
+            let hx, hy;
+            while(!valid) {
+                hx = 100 + Math.random() * (CANVAS_WIDTH - 200);
+                hy = 100 + Math.random() * (CANVAS_HEIGHT - 200);
+                valid = houses.every(h => Math.hypot(h.x - hx, h.y - hy) > 100);
+            }
+            houses.push(new House(hx, hy));
+        }
+
+        // Add obstacles for higher levels
+        if (lvl > 1) {
+            const obsCount = lvl * 2;
+            for (let i = 0; i < obsCount; i++) {
+                obstacles.push({
+                    x: 200 + Math.random() * (CANVAS_WIDTH - 400),
+                    y: 150 + Math.random() * (CANVAS_HEIGHT - 300),
+                    w: 40 + Math.random() * 60,
+                    h: 40 + Math.random() * 60
+                });
+            }
+        }
+    }
+
+    function spawnPowerUp() {
+        const type = Math.random() > 0.5 ? 'GIFT' : 'SPEED';
+        const x = 50 + Math.random() * (CANVAS_WIDTH - 100);
+        const y = 50 + Math.random() * (CANVAS_HEIGHT - 100);
+        powerUps.push(new PowerUp(x, y, type));
+    }
+
+    function showStealPopup(x, y, text) {
+        const div = document.createElement('div');
+        div.className = 'steal-popup';
+        div.style.left = `${canvas.offsetLeft + x}px`;
+        div.style.top = `${canvas.offsetTop + y}px`;
+        div.innerText = text;
+        document.body.appendChild(div);
+        setTimeout(() => div.remove(), 1000);
+    }
+
+    function update(timestamp) {
+        if (gameState !== 'PLAYING') return;
+
+        const dt = timestamp - lastTime;
+        lastTime = timestamp;
+
+        // Player Updates
+        players.forEach(p => p.update());
+
+        // Timer Update
+        timer -= dt / 1000;
+        if (timer <= 0) {
+            timer = 0;
+            endLevel();
+        }
+
+        // Point Growth logic
+        pointTimer += dt;
+        if (pointTimer > POINT_INCREASE_INTERVAL) {
+            houses.forEach(h => { if (h.cooldown <= 0) h.points += 5; });
+            pointTimer = 0;
+        }
+
+        // PowerUp Spawning
+        if (Math.random() < 0.002) spawnPowerUp();
+
+        // Interaction Check
+        houses.forEach(h => {
+            h.update(dt);
+            players.forEach(p => {
+                const dist = Math.hypot(p.x - h.x, p.y - h.y);
+                
+                // Normal Collection
+                if (dist < p.radius + 20 && h.cooldown <= 0) {
+                    p.score += h.points;
+                    h.cooldown = COOLDOWN_DURATION;
+                    h.lastCollectedBy = p.id;
+                    h.lastCollectionTime = Date.now();
+                    const pts = h.points;
+                    h.points = 10; // Reset
+                    showStealPopup(h.x, h.y, `+${pts}`);
+                }
+                
+                // Steal Mechanic
+                // If this player is NOT the one who just collected, and within 3 seconds
+                if (dist < p.radius + 20 && h.cooldown > 0 && h.lastCollectedBy !== p.id) {
+                    const elapsed = Date.now() - h.lastCollectionTime;
+                    if (elapsed < STEAL_WINDOW) {
+                        const otherPlayer = players.find(op => op.id === h.lastCollectedBy);
+                        const stealAmount = 15 + Math.floor(Math.random() * 15);
+                        
+                        if (otherPlayer.score >= stealAmount) {
+                            otherPlayer.score -= stealAmount;
+                            p.score += stealAmount;
+                            h.lastCollectionTime = 0; // Prevent double steal
+                            showStealPopup(h.x, h.y, `STEAL! +${stealAmount}`);
+                        }
+                    }
+                }
+            });
+        });
+
+        // Powerup Collection
+        powerUps = powerUps.filter(pu => {
+            let collected = false;
+            players.forEach(p => {
+                if (Math.hypot(p.x - pu.x, p.y - pu.y) < p.radius + pu.radius) {
+                    if (pu.type === 'GIFT') {
+                        const bonus = 30;
+                        p.score += bonus;
+                        showStealPopup(p.x, p.y, `BONUS +${bonus}`);
+                    } else {
+                        p.boostTimer = 5000; // 5 second boost
+                        showStealPopup(p.x, p.y, `SPEED UP!`);
+                    }
+                    collected = true;
+                }
+            });
+            return !collected;
+        });
+
+        draw();
+        
+        // Sync UI
+        timerDisplay.innerText = formatTime(timer);
+        p1ScoreDisplay.innerText = players[0].score;
+        p2ScoreDisplay.innerText = players[1].score;
+
+        requestAnimationFrame(update);
+    }
+
+    function formatTime(seconds) {
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        // Draw Ground/Paths
+        ctx.fillStyle = "#276749"; // Grass
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        // Grid/Path feel
+        ctx.strokeStyle = "rgba(255,255,255,0.05)";
+        ctx.lineWidth = 1;
+        for(let i=0; i<CANVAS_WIDTH; i+=100) {
+            ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, CANVAS_HEIGHT); ctx.stroke();
+        }
+
+        // Draw Obstacles
+        ctx.fillStyle = "#2d3748";
+        obstacles.forEach(o => {
+            ctx.fillRect(o.x, o.y, o.w, o.h);
+            ctx.strokeStyle = "#4a5568";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(o.x, o.y, o.w, o.h);
+        });
+
+        // Draw Houses
+        houses.forEach(h => h.draw());
+
+        // Draw PowerUps
+        powerUps.forEach(pu => pu.draw());
+
+        // Draw Players
+        players.forEach(p => p.draw());
+    }
+
+    function endLevel() {
+        gameState = 'MENU';
+        const s1 = players[0].score;
+        const s2 = players[1].score;
+        
+        let winText = "";
+        if (s1 > s2) winText = "SANTA WINS!";
+        else if (s2 > s1) winText = "RIVAL WINS!";
+        else winText = "IT'S A DRAW!";
+
+        modalTitle.innerText = winText;
+        modalDesc.innerHTML = `
+            Level ${currentLevel} Finished<br>
+            <span class="text-red-500">Santa: ${s1}</span> vs <span class="text-blue-500">Rival: ${s2}</span>
+            <br><br>Next level will have more houses and complex paths.
+        `;
+        startBtn.innerText = "NEXT LEVEL";
+        modal.style.display = 'block';
+        currentLevel++;
+    }
+
+    function startLevel() {
+        modal.style.display = 'none';
+        gameState = 'PLAYING';
+        lastTime = performance.now();
+        initLevel(currentLevel);
+        requestAnimationFrame(update);
+    }
+
+    // Input Handling
+    window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+    window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+    startBtn.onclick = startLevel;
+
+    // Initial State
+    modal.style.display = 'block';
+</script>
+</body>
+</html>

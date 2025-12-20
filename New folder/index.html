@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Gift Packing Panic</title>
+<style>
+  body {
+    margin: 0;
+    background: radial-gradient(#0b3d2e, #021c14);
+    font-family: monospace;
+  }
+  canvas {
+    display: block;
+    margin: auto;
+    background: linear-gradient(#1e5631, #0b3d2e);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="game" width="960" height="520"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+// ---------------- GAME STATE ----------------
+let score = 0;
+let combo = 0;
+let speed = 1.6;
+
+const giftTypes = [
+  { type: "TOY", color: "#e53935", box: 0 },
+  { type: "GAME", color: "#1e88e5", box: 1 },
+  { type: "BOOK", color: "#43a047", box: 2 }
+];
+
+let gifts = [];
+
+let santa = {
+  x: 460,
+  y: 320,
+  holding: null
+};
+
+// ---------------- INPUT ----------------
+let keys = {};
+window.addEventListener("keydown", e => keys[e.key] = true);
+window.addEventListener("keyup", e => keys[e.key] = false);
+
+// ---------------- SPAWN GIFTS ----------------
+function spawnGift() {
+  let g = giftTypes[Math.floor(Math.random() * giftTypes.length)];
+  gifts.push({
+    x: -40,
+    y: 170,
+    w: 32,
+    h: 32,
+    type: g.type,
+    color: g.color,
+    targetBox: g.box
+  });
+}
+
+setInterval(spawnGift, 1300);
+
+// ---------------- UPDATE ----------------
+function update() {
+  // Santa move
+  if (keys["ArrowLeft"]) santa.x -= 4;
+  if (keys["ArrowRight"]) santa.x += 4;
+  santa.x = Math.max(0, Math.min(canvas.width - 40, santa.x));
+
+  // Pick gift
+  if (keys["ArrowUp"] && !santa.holding) {
+    gifts.forEach((g, i) => {
+      if (Math.abs(g.x - santa.x) < 30) {
+        santa.holding = g;
+        gifts.splice(i, 1);
+      }
+    });
+  }
+
+  // Drop gift
+  if (keys[" "] && santa.holding) {
+    let boxIndex = Math.floor((santa.x - 140) / 220);
+    if (boxIndex === santa.holding.targetBox) {
+      score += 100 + combo * 20;
+      combo++;
+      speed += 0.05;
+    } else {
+      combo = 0;
+    }
+    santa.holding = null;
+  }
+
+  // Move gifts on conveyor
+  gifts.forEach(g => g.x += speed);
+
+  // Missed gifts
+  gifts = gifts.filter(g => {
+    if (g.x > canvas.width) {
+      combo = 0;
+      return false;
+    }
+    return true;
+  });
+}
+
+// ---------------- DRAW ----------------
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Conveyor
+  ctx.fillStyle = "#555";
+  ctx.fillRect(0, 200, canvas.width, 40);
+  ctx.strokeStyle = "#222";
+  for (let i = 0; i < canvas.width; i += 40) {
+    ctx.strokeRect(i, 200, 40, 40);
+  }
+
+  // Gifts
+  gifts.forEach(g => {
+    ctx.fillStyle = g.color;
+    ctx.fillRect(g.x, g.y, g.w, g.h);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(g.type[0], g.x + 10, g.y + 20);
+  });
+
+  // Boxes
+  const boxY = 380;
+  const labels = ["TOY", "GAME", "BOOK"];
+  const colors = ["#e53935", "#1e88e5", "#43a047"];
+
+  for (let i = 0; i < 3; i++) {
+    let bx = 140 + i * 220;
+    ctx.fillStyle = colors[i];
+    ctx.fillRect(bx, boxY, 120, 80);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(labels[i], bx + 35, boxY + 45);
+  }
+
+  // Santa
+  ctx.fillStyle = "#d32f2f";
+  ctx.beginPath();
+  ctx.arc(santa.x + 20, 320, 18, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Held gift
+  if (santa.holding) {
+    ctx.fillStyle = santa.holding.color;
+    ctx.fillRect(santa.x + 5, 290, 20, 20);
+  }
+
+  // HUD
+  ctx.fillStyle = "#fff";
+  ctx.font = "18px monospace";
+  ctx.fillText("Score: " + score, 20, 30);
+  ctx.fillText("Combo: x" + combo, 20, 55);
+  ctx.fillText("↑ Pick  |  SPACE Drop", 20, 80);
+}
+
+// ---------------- LOOP ----------------
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+
+</body>
+</html>

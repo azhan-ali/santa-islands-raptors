@@ -1,0 +1,292 @@
+# Pancake Cat [Eat pancakes, become a legend.]
+
+![Turbo game window with an orange cat head and falling pancakes](/pancake-cat-screenshot.png)
+
+## Overview
+
+:::info[Summary]
+
+> In this tutorial, you will build Pancake Cat — a fast-paced game where you control a hungry orange cat that catches falling pancakes. The more pancakes you eat, the higher your score.
+
+**Difficulty**
+
+> ★★☆☆☆
+
+**Time Estimate**
+
+> ~20 minutes
+
+**What You'll Learn**
+
+- [x] How to initialize and run a Turbo project
+- [x] How to define and update game state
+- [x] How to render sprites and handle input
+- [x] How to implement collision detection
+
+:::
+
+## Walkthrough
+
+:::tip[Development Tip]
+The full source code of this game is [available on Github](https://github.com/super-turbo-society/turbo-demos/tree/main/pancake-cat)
+:::
+
+::::steps
+
+### Initialize the Project
+
+Begin by creating a new project called `pancake-cat`:
+
+```bash [Terminal]
+turbo init pancake-cat
+```
+
+This initializes a Rust project with the following structure:
+
+```
+pancake-cat/            # Your project's root directory.
+├── src/                # The directory of your code. <!-- [!code focus] [!code hl] -->
+│   └── lib.rs          # The main file for the game. <!-- [!code focus] [!code hl] -->
+├── Cargo.toml          # Rust project manifest. <!-- [!code focus] [!code hl] -->
+└── turbo.toml          # Turbo configuration. <!-- [!code focus] [!code hl] -->
+```
+
+### Create a `sprites` Folder
+
+Inside your project directory, create a folder named `sprites`. This folder will contain all your game sprites.
+
+```
+your-project-dir/       # Your project's root directory.
+├── sprites/            # The directory of your sprite assets. <!-- [!code focus] [!code hl] [!code ++] -->
+├── src/                # The directory of your code.
+│   └── lib.rs          # The main file for the game.
+├── Cargo.toml          # Rust project manifest.
+└── turbo.toml          # Turbo configuration.
+```
+
+### Add Sprite Assets
+
+Add the following files to the `sprites` directory.
+
+- [x] [munch_cat.webp](https://raw.githubusercontent.com/super-turbo-society/turbo-demos/refs/heads/main/pancake-cat/sprites/munch_cat.webp)
+- [x] [heart.png](https://raw.githubusercontent.com/super-turbo-society/turbo-demos/refs/heads/main/pancake-cat/sprites/heart.png)
+
+### Run the Game
+
+At this point, we can run our game and leave it running as we make changes. Don't worry, it is just a blank screen for now!
+
+```bash [Terminal]
+turbo run -w pancake-cat
+```
+
+### Game State Initialization
+
+Add this code to the top of your `lib.rs` file. We'll explain what everything does later on:
+
+```rs [src/lib.rs]
+use turbo::*;
+
+#[turbo::serialize]
+struct Pancake {
+    x: f32,
+    y: f32,
+    vel: f32,
+    radius: f32,
+}
+
+#[turbo::game]
+struct GameState {
+    frame: u32,
+    last_munch_at: u32,
+    cat_x: f32,
+    cat_y: f32,
+    cat_r: f32,
+    pancakes: Vec<Pancake>,
+    score: u32,
+}
+
+impl GameState {
+    fn new() -> Self {
+        Self {
+            frame: 0,
+            last_munch_at: 0,
+            cat_x: 128.0,
+            cat_y: 112.0,
+            cat_r: 8.0,
+            pancakes: vec![],
+            score: 0,
+        }
+    }
+    fn update(&mut self) {
+        // we will come back to this later.
+    }
+}
+
+```
+
+### Update the Game Loop
+
+Use the Turbo game loop to run your game logic.
+
+:::tip[Development Tip]
+`update()` runs 60 times per second, and is repsonsible for updating all changes to your game state.
+:::
+
+### Drawing the Cat
+
+Render the cat sprite with animation frame logic handled by Turbo:
+
+```rs [src/lib.rs]
+sprite!("munch_cat", x = self.cat_x - self.cat_r, y = self.cat_y - 16.0);
+```
+
+### Cat Movement
+
+The first thing to do is handle player input to move the cat. Add this code in the update() function:
+
+```rs [src/lib.rs]
+if gamepad::get(0).left.pressed() {
+    self.cat_x -= 2.;
+}
+if gamepad::get(0).right.pressed() {
+    self.cat_x += 2.;
+}
+```
+
+Now click over to your game window and press left and right on your keyboard. You should see the cat moving around!
+
+### Pancake Generation
+
+Randomly spawn pancakes:
+
+```rs [src/lib.rs]
+if random::rand() % 64 == 0 {
+    let pancake = Pancake {
+        x: (rand() % 256) as f32,
+        y: 0.0,
+        vel: (rand() % 3 + 1) as f32,
+        radius: (rand() % 10 + 5) as f32,
+    };
+    self.pancakes.push(pancake);
+}
+```
+
+:::tip[Development Tip]
+We defined the `Pancake` struct in our `new` function earlier. Now we are adding individual instances of `Pancake` to the game.
+
+Each `Pancake` has a position (`x` and `y`), a velocity (`vel`), and a size (`radius`). We use randomness so the Pancakes are all a little different.
+
+We also created a `Vec<Pancake>` in our `new` function. Once we create the new `Pancake` we add it to that `Vec` so that we can track it in our `GameState`.
+:::
+
+### Pancake Movement & Collision
+
+Now we can add some code that moves the Pancakes downwards, and checks if they are overlapping the cat. When they overlap, we add 1 to `self.score`.
+
+```rs [src/lib.rs]
+let cat_center = (self.cat_x + self.cat_r, self.cat_y + self.cat_r);
+
+self.pancakes.retain_mut(|p| {
+    p.y += p.vel;
+    let dx = cat_center.0 - (p.x + p.radius);
+    let dy = cat_center.1 - (p.y + p.radius);
+    let distance = (dx * dx + dy * dy).sqrt();
+    let radii_sum = self.cat_r + p.radius;
+    let radii_diff = (self.cat_r - p.radius).abs();
+
+    if radii_diff <= distance && distance <= radii_sum {
+        self.score += 1;
+        self.last_munch_at = self.frame;
+        false
+    } else if p.y < 144. + (p.radius * 2.) {
+        true
+    } else {
+        false
+    }
+});
+```
+
+:::tip[Development Tip]
+`retain_mut` is a method in Rust that lets you look through and mutate every element in a `Vec` and only **retain** the ones that pass a certain condition. Any Pancakes that return `false` are removed from the `Vec`.
+
+In this case, we are removing any Pancakes that overlap the Cat, and also removing the ones that are below the bottom of the screen. The rest of the Pancakes will remain on screen, to give the player a chance to catch them.
+:::
+
+### Background Tiles
+
+Draw a simple animated background:
+
+```rs [src/lib.rs]
+clear(0x00ffffff);
+let frame = (self.frame as i32) / 2;
+for col in 0..9 {
+    for row in 0..6 {
+        let x = ((col * 32 + frame) % (272 + 16)) - 32;
+        let y = ((row * 32 + frame) % (144 + 16)) - 24;
+        sprite!("heart", x = x, y = y);
+    }
+}
+self.frame += 1;
+```
+
+### Drawing the Cat
+
+Render the cat sprite with animation frame logic handled by Turbo:
+
+```rs [src/lib.rs]
+sprite!("munch_cat", x = self.cat_x - self.cat_r, y = self.cat_y - 16.0);
+```
+
+### Drawing the Pancakes
+
+Draw each Pancake by making 3 concentric circles:
+
+```rs [src/lib.rs]
+for p in &self.pancakes {
+    circ!(x = p.x, y = p.y + 1.0, d = p.radius + 2., color = 0x000000aa);
+    circ!(x = p.x, y = p.y, d = p.radius + 1., color = 0xf4d29cff);
+    circ!(x = p.x, y = p.y, d = p.radius, color = 0xdba463ff);
+}
+```
+
+### Speech Bubble
+
+Display a speech bubble with “MUNCH!” when the cat catches a pancake:
+
+```rs [src/lib.rs]
+if self.frame >= 64 && self.frame.saturating_sub(self.last_munch_at) <= 60 {
+    rect!(w = 30, h = 10, x = self.cat_x + 32.0, y = self.cat_y);
+    circ!(d = 10, x = self.cat_x + 28.0, y = self.cat_y);
+    rect!(w = 10, h = 5, x = self.cat_x + 28.0, y = self.cat_y + 5.0);
+    circ!(d = 10, x = self.cat_x + 56.0, y = self.cat_y);
+    text!("MUNCH!", x = self.cat_x + 33.0, y = self.cat_y + 3.0, font = "small", color = 0x000000ff);
+}
+```
+
+### Score Display
+
+Draw the player's score in the top-left corner:
+
+```rs [src/lib.rs]
+text!("Score: {}", self.score; x = 10, y = 10, font = "large", color = 0xffffffff);
+```
+
+:::tip[Development Tip]
+Save your code, and then click over to your Turbo game window to see your changes! If you want to reset your score, press `ctrl+R` on Windows or `cmd+R` on Mac. That will restart your game from the initial state.
+:::
+
+::::
+
+## Conclusion
+
+You just built a fully playable game from scratch using Turbo: input handling, game state, rendering, and collision — all in a tight feedback loop with real-time updates.
+
+You've met the cat. You’ve caught the pancakes. And you’ve laid the foundation for every game you’ll make next.
+
+## Next Steps
+
+- Swap out hearts or pancakes for your own sprite sets
+- Add [`sounds`](/learn/api/audio) when the cat munches or misses
+- Track lives or missed pancakes for added challenge
+- Create a title screen and end state
+- Export your game to the web using [`turbo export`](/learn/guides/cli)

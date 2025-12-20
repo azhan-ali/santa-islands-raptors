@@ -1,0 +1,83 @@
+# Gamepad
+
+## Overview
+
+Turbo gamepad layouts are similar to a SNES controller. Gamepad controls for players 1 and 2 are automatically mapped to the keyboard:
+
+| Gamepad | Keyboard (P1)       | Keyboard (P2) |
+| ------- | ------------------- | ------------- |
+| Up      | `W` or `UpArrow`    | `I`           |
+| Down    | `S` or `DownArrow`  | `J`           |
+| Left    | `A` or `LeftArrow`  | `K`           |
+| Right   | `D` or `RightArrow` | `L`           |
+| A       | `Z`                 | `M`           |
+| B       | `X`                 | `,`           |
+| X       | `C`                 | `.`           |
+| Y       | `V`                 | `/`           |
+| Start   | `Space`             | `[`           |
+| Select  | `Enter`             | `]`           |
+
+:::note
+With actual gamepads, left analog stick input is mapped to direction buttons. Beyond that, buttons not listed in the table above are ignored.
+:::
+
+:::info
+On mobile web, touch swipes/drags are treated as `gamepad` direction presses.
+:::
+
+## API
+
+### `gamepad::get`
+
+Gets the gamepad data for a player.
+
+```rs
+gamepad::get(gamepad_index: u32) -> Gamepad
+```
+
+| Param           | Type  | Default | Description            |
+| :-------------- | :---- | :------ | :--------------------- |
+| `gamepad_index` | `u32` |         | The gamepad input for. |
+
+## Usage
+
+### Basics
+
+To retrieve the gamepad state of a player, use the `gamepad` function.
+
+```rs
+// Get the gamepad state for player 1
+let p1_gamepad = gamepad::get(0);
+
+// Get the gamepad state for player 2
+let p2_gamepad = gamepad::get(1);
+```
+
+:::note
+Gamepads are `0`-indexed, so `0` is player 1, `1` is player 2, etc.
+:::
+
+### Button Methods
+
+To check the button states for players, utilize the following methods after obtaining the gamepad state using the `gamepad` function:
+
+```rs
+let gp = gamepad::get(0);
+
+if gp.a.just_pressed() {
+    // Fired at the instant the button/touch goes down
+}
+if gp.a.pressed() {
+    // True every frame the button is held down
+}
+if gp.a.just_released() {
+    // Fired at the moment the button is released
+}
+if gp.a.released() {
+    // True every frame the button is NOT held down
+}
+```
+
+:::note
+This example just demonstrates checking the a button, but you can check all other buttons listed in the table above (`gp.start`, `gp.up`, etc)
+:::

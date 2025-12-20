@@ -1,0 +1,103 @@
+# Pointer
+
+## Overview
+
+The `Pointer` API provides a single interface for handling both mouse and touch inputs to maximize cross-platform compatibility.
+
+## API
+
+### `pointer::screen`
+
+A pointer input (e.g. mouse or touch) with position in fixed screen-space pixel coordinates.
+
+```rust
+pointer::screen() -> ScreenPointer
+```
+
+### `pointer::world`
+
+A pointer input transformed into world-space coordinates, relative to the current camera view.
+
+```rust
+pointer::world() -> WorldPointer
+```
+
+## Usage
+
+### Reading Pointer Position & State
+
+```rust
+// World‐space position (accounts for camera zoom & pan)
+// Useful for interaction with camera-relative elements
+let world_pointer = pointer::world();
+let (world_x, world_y) = world.xy();
+
+// Screen-space position (e.g. for UI)
+// Useful for interaction with fixed-position elements
+let screen_pointer = pointer::screen();
+let (screen_x, screen_y) = screen.xy();
+
+// Button & touch states
+if screen_pointer.just_pressed() {
+    // Fired at the instant the button/touch goes down
+}
+if screen_pointer.pressed() {
+    // True every frame the button/touch is held
+}
+if screen_pointer.just_released() {
+    // Fired at the instant the button/touch goes up
+}
+if screen_pointer.released() {
+    // True every frame the button/touch is up
+}
+```
+
+:::
+
+### Hit-Testing Bounds
+
+```rs
+let target = Bounds::new(100, 100, 64, 64);
+
+// Screen-space
+let screen_pointer = pointer::screen();
+if screen_pointer.intersects_bounds(target) {
+    // Pointer relative to the screen is inside `target`
+}
+if screen_pointer.just_pressed_bounds(target) {
+    // Pointer relative to the screen just pressed on `target`
+}
+
+// World-space
+let world_pointer = pointer::world();
+if world_pointer.intersects_bounds(target) {
+    // Pointer relative to the camera is inside `target`
+}
+if world_pointer.just_pressed_bounds(target) {
+    // Pointer relative to the camera just pressed on `target`
+}
+```
+
+### Hit-Testing Arbitrary Rectangles
+
+Suppose you have a sprite at (50, 30) sized 100×20:
+
+```rs
+// Screen-space
+let screen_pointer = pointer::screen();
+if screen_pointer.intersects(50, 30, 100, 20) {
+    // Pointer is over the rectangle in screen coordinates
+}
+if screen_pointer.intersects(50, 30, 100, 20) && screen_pointer.just_pressed() {
+    // Pointer just clicked/tapped the rectangle in screen coordinates
+}
+
+// World-space
+let world_pointer = pointer::world();
+if world_pointer.intersects(50, 30, 100, 20) {
+    // Pointer is over the rectangle in world coordinates
+}
+if world_pointer.intersects(50, 30, 100, 20) && world_pointer.just_pressed() {
+    // Pointer just clicked/tapped the rectangle in world coordinates
+}
+```
