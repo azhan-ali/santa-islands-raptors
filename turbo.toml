@@ -3,4 +3,8 @@ width = 512
 height = 288
 
 [audio]
-home_music = "audio/home.mp3"
+home_music = { source = "audio/home.mp3" }
+coin = { source = "audio/projectile_hit.wav" }
+
+[sprite]
+house = { source = "sprites/house.png" }
