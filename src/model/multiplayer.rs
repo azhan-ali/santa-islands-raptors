@@ -96,6 +96,7 @@ pub struct MultiplayerGame {
     pub winner_text: String,
     pub frame_count: u32,
     pub next_level_timer: u32,
+    pub last_pickup_pos: (f32, f32), // Track last pickup to avoid respawn nearby
 }
 
 impl MultiplayerGame {
@@ -119,6 +120,7 @@ impl MultiplayerGame {
             winner_text: "".to_string(),
             frame_count: 0,
             next_level_timer: 0,
+            last_pickup_pos: (0.0, 0.0),
         };
         game.init_level(1);
         game
@@ -226,42 +228,59 @@ impl MultiplayerGame {
             self.end_game();
         }
 
-        // Spawn Powerups randomly (with overlap check)
-        if random::u32() % 500 == 0 {
-             let mut px = 0.0;
-             let mut py = 0.0;
-             let mut safe = false;
-             let mut attempts = 0;
+        // Spawn Powerups (6s Cycle)
+        // 0s (360 frames): Gift Point (0)
+        // 3s (180 frames): Speed Boost (1)
+        let phase = self.frame_count % 360;
+        let kind_to_spawn = if phase == 0 { Some(0) } else if phase == 180 { Some(1) } else { None };
+
+        if let Some(kind) = kind_to_spawn {
+             // Check if already exists
+             let exists = self.powerups.iter().any(|p| p.kind == kind);
              
-             while !safe && attempts < 10 {
-                 attempts += 1;
-                 px = 30.0 + (random::u32() % 450) as f32;
-                 py = 30.0 + (random::u32() % 220) as f32;
+             if !exists {
+                 let mut px = 0.0;
+                 let mut py = 0.0;
+                 let mut safe = false;
+                 let mut attempts = 0;
                  
-                 safe = true;
-                 for h in &self.houses {
-                     let d = ((h.x - px).powi(2) + (h.y - py).powi(2)).sqrt();
-                     if d < 40.0 { // Keep distance from houses
-                         safe = false; 
-                         break; 
+                 while !safe && attempts < 15 {
+                     attempts += 1;
+                     px = 40.0 + (random::u32() % 432) as f32;
+                     py = 40.0 + (random::u32() % 208) as f32;
+                     
+                     safe = true;
+                     
+                     // 1. Not on houses
+                     for h in &self.houses {
+                         let d = ((h.x - px).powi(2) + (h.y - py).powi(2)).sqrt();
+                         if d < 45.0 { safe = false; break; }
+                     }
+                     
+                     // 2. Not near players
+                     if safe {
+                         for p in &self.players {
+                             let d = ((p.x - px).powi(2) + (p.y - py).powi(2)).sqrt();
+                             if d < 60.0 { safe = false; break; }
+                         }
+                     }
+                     
+                     // 3. Not near last pickup (avoid camping)
+                     if safe {
+                         let (lx, ly) = self.last_pickup_pos;
+                         let d = ((lx - px).powi(2) + (ly - py).powi(2)).sqrt();
+                         if d < 80.0 { safe = false; }
                      }
                  }
-                 // Avoid other powerups too? (Optional, but good practice)
+                 
                  if safe {
-                     for pu in &self.powerups {
-                         let d = ((pu.x - px).powi(2) + (pu.y - py).powi(2)).sqrt();
-                         if d < 30.0 { safe = false; break; }
-                     }
+                     self.powerups.push(PowerUp {
+                         x: px,
+                         y: py,
+                         kind,
+                         collected: false,
+                     });
                  }
-             }
-             
-             if safe {
-                 self.powerups.push(PowerUp {
-                     x: px,
-                     y: py,
-                     kind: (random::u32() % 2) as u8,
-                     collected: false,
-                 });
              }
         }
 
@@ -362,26 +381,50 @@ impl MultiplayerGame {
         }
         self.floating_texts.retain(|t| t.life > 0);
         
-        // Process deferred sparkles
-        for (sx, sy) in sparkle_reqs {
-            self.spawn_sparkles(sx, sy);
-        }
         
         // Powerup Interaction
          for pu in self.powerups.iter_mut() {
              if pu.collected { continue; }
              for player in self.players.iter_mut() {
                 let dist = ((player.x - pu.x).powi(2) + (player.y - pu.y).powi(2)).sqrt();
-                if dist < (player.radius + 8.0) {
-                    pu.collected = true;
-                    if pu.kind == 0 { // Gift
-                        player.score += 50;
-                    } else { // Speed
-                        player.boost_timer = 300; // 5 secs
-                    }
+                if dist < (player.radius + 15.0) {
+                     pu.collected = true;
+                     self.last_pickup_pos = (pu.x, pu.y); // Record location
+                     
+                     if pu.kind == 0 {
+                         // Gift: Points
+                         player.score += 50;
+                         // Text Pop
+                         self.floating_texts.push(FloatingText {
+                            x: pu.x,
+                            y: pu.y - 10.0,
+                            text: "+50".to_string(),
+                            color: 0xFFD700FF,
+                            life: 60,
+                        });
+                     } else {
+                         // Bolt: Speed
+                         player.boost_timer = 300; // 5s
+                         // Text Pop
+                         self.floating_texts.push(FloatingText {
+                            x: pu.x,
+                            y: pu.y - 10.0,
+                            text: "SPEED!".to_string(),
+                            color: 0x00E5FFFF,
+                            life: 60,
+                        });
+                     }
+                     sparkle_reqs.push((pu.x, pu.y));
+                     turbo::audio::play("coin");
                 }
              }
          }
+
+        // Process deferred sparkles (Houses & Powerups)
+        for (sx, sy) in sparkle_reqs {
+            self.spawn_sparkles(sx, sy);
+        }
+
         // Update Particles
         for p in self.particles.iter_mut() {
             p.x += p.vx;
@@ -625,51 +668,67 @@ impl MultiplayerGame {
                  }
 
              } else { 
-                 // Speed Boost (Cyan Comet / Energy Ball)
-                 let bob = ((self.frame_count / 10) % 2) as i32;
+                 // Speed Boost (Winged Electric Boot)
+                 let bob = ((self.frame_count / 15) % 2) as i32;
                  let py_anim = py - bob;
                  
-                 // 1. Glow
-                 circ!(x=px, y=py_anim, d=28, color=0x00E5FF22); 
+                 // 1. Electric Aura (Cyan Glow)
+                 circ!(x=px, y=py_anim, d=26, color=0x00E5FF33); // Cyan Aura
 
-                 // 2. Tail/Body Construction
-                 // We build from back to front.
-                 let hx = px + 2; // Head X
+                 // Helper vars
+                 let hx = px;
                  let hy = py_anim;
                  
-                 // Dark Blue Shading (The jagged outline)
-                 let col_dark = 0x01579BFF;
-                 rect!(x=hx-12, y=hy-1, w=10, h=3, color=col_dark); // Mid trail
-                 rect!(x=hx-8, y=hy-5, w=10, h=4, color=col_dark); // Top trail
-                 rect!(x=hx-9, y=hy+3, w=10, h=4, color=col_dark); // Bot trail
+                 // 2. Electric Trail (Blue/Cyan Zig-Zags)
+                 let trail_offset = (self.frame_count % 4) as i32;
+                 let col_trail = 0x4FC3F7FF; // Light Blue
                  
-                 // Cyan/Teal Body
-                 let col_cyan = 0x18FFFFFF;
-                 rect!(x=hx-10, y=hy, w=8, h=2, color=col_cyan); // Mid streak
-                 rect!(x=hx-6, y=hy-4, w=8, h=3, color=col_cyan); // Top streak
-                 rect!(x=hx-7, y=hy+4, w=8, h=2, color=col_cyan); // Bot streak
+                 // Top Trail
+                 rect!(x=hx+6, y=hy-5, w=6, h=1, color=col_trail);
+                 rect!(x=hx+10 + trail_offset, y=hy-7, w=4, h=1, color=col_trail);
                  
-                 // Connector
-                 rect!(x=hx-4, y=hy-2, w=6, h=5, color=col_cyan);
+                 // Mid Trail
+                 rect!(x=hx+8, y=hy+1, w=8, h=2, color=0x00B0FFFF); // Darker Cyan
+                 rect!(x=hx+14 + trail_offset, y=hy, w=3, h=1, color=0xFFFFFFFF); // White Spark
+                 
+                 // Bot Trail
+                 rect!(x=hx+7, y=hy+6, w=5, h=1, color=col_trail);
+                 
+                 // 3. Boot Body (Brown)
+                 let col_boot = 0x5D4037FF;
+                 let col_sole = 0x3E2723FF;
+                 
+                 // Leg
+                 rect!(x=hx-4, y=hy-6, w=7, h=6, color=col_boot);
+                 // Foot
+                 rect!(x=hx-6, y=hy, w=11, h=5, color=col_boot);
+                 // Sole/Heel
+                 rect!(x=hx-6, y=hy+5, w=11, h=2, color=col_sole);
+                 
+                 // Red Laces detail
+                 rect!(x=hx+2, y=hy-2, w=2, h=1, color=0xD32F2FFF);
+                 rect!(x=hx+1, y=hy+1, w=2, h=1, color=0xD32F2FFF);
 
-                 // 3. Head (Sphere)
-                 circ!(x=hx, y=hy, d=14, color=col_cyan); // Cyan Base
-                 circ!(x=hx+1, y=hy, d=10, color=0xFFFFFFFF); // White Bright Core
+                 // 4. Fur Trim (White)
+                 rect!(x=hx-5, y=hy-8, w=9, h=3, color=0xFFFFFFFF); // Top fluff
                  
-                 // 4. Zig-Zag Details (Dark breaks)
-                 rect!(x=hx-3, y=hy-1, w=4, h=2, color=col_dark);
+                 // 5. Wing (Angel White) - Extending from heel/ankle
+                 let wx = hx - 2;
+                 let wy = hy - 6;
+                 let wing_flap = if (self.frame_count / 10) % 2 == 0 { -1 } else { 0 };
                  
-                 // 5. Sparkles (Yellow & Blue)
-                 let frame = self.frame_count;
-                 if frame % 20 < 10 {
-                    rect!(x=px-10, y=hy-6, w=1, h=1, color=0xFFEB3BFF); // Yellow
-                    rect!(x=px+9, y=hy+5, w=1, h=1, color=0x00FFFFFF); // Blue
-                 } else {
-                    rect!(x=px-6, y=hy+7, w=1, h=1, color=0xFFEB3BFF);
-                    rect!(x=px+11, y=hy-4, w=1, h=1, color=0xFFFFFFFF);
+                 // Wing Base
+                 rect!(x=wx, y=wy + wing_flap, w=6, h=3, color=0xFFFFFFFF);
+                 // Wing Tip Up
+                 rect!(x=wx+2, y=wy-3 + wing_flap, w=2, h=3, color=0xFFFFFFFF);
+                 rect!(x=wx+4, y=wy-5 + wing_flap, w=2, h=5, color=0xFFFFFFFF);
+                 // Feathers (Cyan tint)
+                 rect!(x=wx+3, y=wy-2 + wing_flap, w=2, h=2, color=0xE0F7FAFF);
+                 
+                 // 6. Sparkles
+                 if self.frame_count % 20 < 10 {
+                    rect!(x=hx-9, y=hy-9, w=2, h=2, color=0xFFFFFFFF);
                  }
-                 // Extra static stars
-                 rect!(x=px-12, y=hy, w=1, h=1, color=0xFFEB3BFF);
              }
         }
 

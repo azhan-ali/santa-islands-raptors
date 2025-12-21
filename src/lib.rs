@@ -302,12 +302,12 @@ impl GameState {
             // Draw Mode Name (Below Box)
             // Center the text below the box
             let name = modes[i];
-            let name_w = name.len() as i32 * 5; // Estimating small font width (approx 5px)
+            let name_w = name.len() as i32 * 6; // Estimating medium font width (approx 6px)
             let text_x = x + (box_size as i32 / 2) - (name_w / 2);
             
             // Highlight selected text color
             let text_color = if is_selected { 0x00FF00FF } else { 0xAAAAAAFF };
-            text!(name, x = text_x, y = y + box_size + 8, font = "small", color = text_color);
+            text!(name, x = text_x, y = y + box_size + 10, font = "medium", color = text_color);
         }
     }
 
@@ -318,14 +318,30 @@ impl GameState {
         let start_x_title = (512 - title_pixel_width as i32) / 2;
         draw_title(start_x_title, 20, scale as u32);
         
-        text!("DEVELOPERS", x = 216, y = 70, font = "large", color = 0xFF0000FF);
+        let center_x = |text: &str, font_w: i32| -> i32 {
+            (512 - (text.len() as i32 * font_w)) / 2
+        };
+
+        // Header
+        let txt_dev = "DEVELOPERS";
+        text!(txt_dev, x = center_x(txt_dev, 8), y = 70, font = "large", color = 0xFF0000FF);
         
-        text!("Aarif Khan", x = 216, y = 100, color = 0xFFFFFFFF);
-        text!("Azhan Ali", x = 220, y = 120, color = 0xFFFFFFFF);
+        // Names
+        let txt_name1 = "Aarif Khan";
+        text!(txt_name1, x = center_x(txt_name1, 6), y = 100, font = "medium", color = 0xFFFFFFFF);
         
-        text!("Team Name:", x = 216, y = 150, color = 0xFFFF00FF);
-        text!("Tm-AzhanAarif", x = 204, y = 165, color = 0xFFFFFFFF);
+        let txt_name2 = "Azhan Ali";
+        text!(txt_name2, x = center_x(txt_name2, 6), y = 120, font = "medium", color = 0xFFFFFFFF);
         
-        text!("Press X to return", x = 190, y = 220, color = 0xAAAAAAFF);
+        // Team
+        let txt_team_label = "Team Name:";
+        text!(txt_team_label, x = center_x(txt_team_label, 6), y = 150, font = "medium", color = 0xFFFF00FF);
+        
+        let txt_team = "Tm-AzhanAarif";
+        text!(txt_team, x = center_x(txt_team, 6), y = 165, font = "medium", color = 0xFFFFFFFF);
+        
+        // Back
+        let txt_back = "Press X to return";
+        text!(txt_back, x = center_x(txt_back, 5), y = 220, font = "small", color = 0xAAAAAAFF);
     }
 }
