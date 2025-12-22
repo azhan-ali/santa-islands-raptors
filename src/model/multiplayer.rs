@@ -27,8 +27,9 @@ pub struct House {
     pub cooldown: u32,
     pub last_collected_by: Option<u8>,
     pub last_collection_time: u32, // in ticks
-    pub is_high_value: bool, // Level 3 (Legacy/Unused mostly)
+    pub is_high_value: bool, // Level 3: Unused. Level 4: True for Power House.
     pub team: u8, // 0 = Neutral, 1 = Red, 2 = Blue
+    pub gift_timer: u32, // Level 4: Timer for spawning risky gifts
 }
 
 #[turbo::serialize]
@@ -39,7 +40,7 @@ pub struct Obstacle {
     pub w: f32,
     pub h: f32,
     pub respawn_timer: u32,
-    pub kind: u8, // 0 = Bomb, 1 = Wood
+    pub kind: u8, // 0 = Bomb, 1 = Wood, 2 = Snowman (Level 4)
 }
 
 #[turbo::serialize]
@@ -47,8 +48,9 @@ pub struct Obstacle {
 pub struct PowerUp {
     pub x: f32,
     pub y: f32,
-    pub kind: u8, // 0 = Gift, 1 = Speed
+    pub kind: u8, // 0 = Gift, 1 = Speed, 2 = Risky Gift (Level 4)
     pub collected: bool,
+    pub value: i32, // Level 4: +60 or -60
 }
 
 #[turbo::serialize]
@@ -186,7 +188,7 @@ impl MultiplayerGame {
         self.obstacles = vec![];
         
         // 1. Static Level 3 Obstacles (Wood Barriers) - Spawn FIRST to reserve space
-        if _level == 3 {
+        if _level >= 3 {
              // 2 Bridges: Centered at y=100 and y=200. Width ~28.
              // Guards for Bridge 1 (y=100)
              self.obstacles.push(Obstacle { x: 210.0, y: 88.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
@@ -198,12 +200,15 @@ impl MultiplayerGame {
         }
         
         // 2. Houses
-        if _level == 3 {
-             // Level 3: 5 Red (Team 1), 5 Blue (Team 2)
+        // 2. Houses
+        if _level >= 3 {
+             // Level 3 & 4: 5 Red (Team 1), 5 Blue (Team 2)
+             // Level 4: +1 Power House (Team 0)
+             
              // Manually generate to assign teams
              let mut rng = random::u32();
              let mut placed_count = 0;
-             let target = 10;
+             let target = if _level == 4 { 11 } else { 10 };
              let mut attempts = 0;
              
              while placed_count < target && attempts < 1000 {
@@ -213,7 +218,7 @@ impl MultiplayerGame {
                  rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
                  let hy = 40.0 + (rng % 180) as f32; // Keep somewhat upper for start?
                  
-                 // L3 Checks
+                 // L3/L4 Checks (River)
                  if hx > 236.0 && hx < 276.0 { continue; } // River
                  
                  let mut safe = true;
@@ -227,12 +232,29 @@ impl MultiplayerGame {
                  }
                  
                  if safe {
-                     let team = if placed_count < 5 { 1 } else { 2 };
+                     let mut team = 0;
+                     let mut is_pow = false;
+                     let mut g_timer = 0;
+                     
+                     if _level == 4 && placed_count == 10 {
+                         // 11th House is Power House
+                         team = 0; // Neutral? Or maybe make it uncapturable for points? 
+                                   // Rules say "Power High Value House" releases gifts.
+                                   // Does it belong to a team? Probably Neutral (0) so anyone can visit?
+                                   // Or maybe it is just an object.
+                                   // Let's make it Team 0 (Neutral) and Uncapturable logic later.
+                         is_pow = true;
+                         g_timer = 15 * 60; // 15s initial timer
+                     } else {
+                         team = if placed_count < 5 { 1 } else { 2 };
+                     }
+
                      self.houses.push(House {
                         x: hx, y: hy, points: 5, cooldown: 0,
                         last_collected_by: None, last_collection_time: 0,
-                        is_high_value: false,
+                        is_high_value: is_pow,
                         team: team,
+                        gift_timer: g_timer,
                      });
                      placed_count += 1;
                  }
@@ -249,9 +271,21 @@ impl MultiplayerGame {
             // Level 2 & 3 have Bombs
             let bomb_count = if _level == 3 { 6 } else { 8 };
             
+            // Level 4: No bombs mentioned in doc? "Existing bombs... remain". 
+            // So Level 4 keeps L3 obstacles (Wood + Bombs?)
+            // "obstacles: Existing bombs, trees, and wooden blocks remain" -> Yes.
+            // Level 4 Bomb count = Same as L3 (6)? Or less to make room for Snowmen?
+            // Let's assume 6 Bombs.
+            
             let mut rng = random::u32();
             let mut attempts = 0;
-            while self.obstacles.len() < (if _level==3 { 3 + bomb_count } else { bomb_count }) && attempts < 100 {
+            // Target Limit: L3 had ~9 obstacles (3 wood + 6 bombs)
+            // L4 adds Snowmen later.
+            let bomb_target = if _level >= 3 { 6 } else { 8 };
+            
+            let current_obs_count = self.obstacles.len();
+
+            while (self.obstacles.len() - current_obs_count) < bomb_target && attempts < 100 {
                 attempts += 1;
                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
                 let ox = 60.0 + (rng % 392) as f32; 
@@ -264,7 +298,7 @@ impl MultiplayerGame {
                    if ((h.x - ox).powi(2) + (h.y - oy).powi(2)).sqrt() < 60.0 { safe = false; break; }
                 }
                 // Avoid level 3 water strip (ENTIRE STRIP banned for bombs)
-                if _level == 3 {
+                if _level >= 3 {
                      if ox > 236.0 && ox < 276.0 {
                          safe = false; // Block bridge too
                      }
@@ -281,6 +315,40 @@ impl MultiplayerGame {
                     self.obstacles.push(Obstacle { x: ox, y: oy, w: 24.0, h: 24.0, respawn_timer: 0, kind: 0 }); // Kind 0 = Bomb
                 }
             }
+        }
+        
+        // 4. Snowmen (Level 4 Specific)
+        if _level == 4 {
+             let snowman_count = 5;
+             let mut rng = random::u32();
+             let mut attempts = 0;
+             let start_count = self.obstacles.len();
+             
+             while (self.obstacles.len() - start_count) < snowman_count && attempts < 100 {
+                 attempts += 1;
+                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                 let sx = 40.0 + (rng % 432) as f32;
+                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                 let sy = 40.0 + (rng % 208) as f32;
+                 
+                 // River Check
+                 if sx > 236.0 && sx < 276.0 { continue; }
+                 
+                 let mut safe = true;
+                 for h in &self.houses {
+                     if ((h.x - sx).powi(2) + (h.y - sy).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                 }
+                 if safe {
+                     for o in &self.obstacles {
+                         if ((o.x - sx).powi(2) + (o.y - sy).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                     }
+                 }
+                 
+                 if safe {
+                     // Kind 2 = Snowman
+                     self.obstacles.push(Obstacle { x: sx, y: sy, w: 20.0, h: 30.0, respawn_timer: 0, kind: 2 });
+                 }
+             }
         }
         
         // Level 2: Dynamic Shuffle Init
@@ -303,7 +371,7 @@ impl MultiplayerGame {
             let dy = (random::u32() % 260 + 10) as f32;
             
             // Level 3 Check: No trees in River Strip
-            if self.current_level == 3 && dx > 236.0 && dx < 276.0 { continue; }
+            if self.current_level >= 3 && dx > 236.0 && dx < 276.0 { continue; }
             
             let mut safe = true;
             // Check Houses
@@ -336,7 +404,7 @@ impl MultiplayerGame {
                 let dx = (random::u32() % 500 + 10) as f32;
                 let dy = (random::u32() % 260 + 10) as f32;
                 
-                if self.current_level == 3 && dx > 236.0 && dx < 276.0 { continue; }
+                if self.current_level >= 3 && dx > 236.0 && dx < 276.0 { continue; }
                 
                 let mut safe = true;
                 // Check Houses
@@ -436,7 +504,7 @@ impl MultiplayerGame {
                      }
                      
                      // Level 3 River Strip
-                     if safe && self.current_level == 3 {
+                     if safe && self.current_level >= 3 {
                          if px > 236.0 && px < 276.0 { safe = false; }
                      }
                      
@@ -461,6 +529,7 @@ impl MultiplayerGame {
                          y: py,
                          kind,
                          collected: false,
+                         value: 0,
                      });
                  }
              }
@@ -489,7 +558,7 @@ impl MultiplayerGame {
                 let next_y = self.players[i].y + dy * speed;
 
                 // Level 3 Water Collision
-                if self.current_level == 3 && self.is_in_water(next_x, next_y) {
+                if self.current_level >= 3 && self.is_in_water(next_x, next_y) {
                     // Block movement - sliding logic?
                     // Simple: Don't update if in water. Check X and Y separately for slide.
                     if !self.is_in_water(next_x, self.players[i].y) {
@@ -540,7 +609,7 @@ impl MultiplayerGame {
                  let dist = ((player.x - house.x).powi(2) + (player.y - house.y).powi(2)).sqrt();
                  if dist < (player.radius + 12.0) && house.cooldown == 0 {
                         // Check Team (Level 3)
-                        let is_wrong_team = self.current_level == 3 && (
+                        let is_wrong_team = self.current_level >= 3 && (
                             (house.team == 1 && player.id != 1) || 
                             (house.team == 2 && player.id != 2)
                         );
@@ -575,7 +644,7 @@ impl MultiplayerGame {
                                 life: 60,
                              });
 
-                             if self.current_level == 3 {
+                             if self.current_level >= 3 {
                                  house.cooldown = 300; // Disable first. Only enable if successfully moved.
                                  house_reshuffle_indices.push(i); 
                              } else {
@@ -730,6 +799,112 @@ impl MultiplayerGame {
         }
         self.floating_texts.retain(|t| t.life > 0);
         
+        // Level 4: Snowman Collision & Power House Logic
+        if self.current_level == 4 {
+             for p in self.players.iter_mut() {
+                 if p.invuln_timer > 0 { continue; }
+                 
+                 for o in &self.obstacles {
+                     if o.kind == 2 { // Snowman
+                         let dist = ((p.x - o.x).powi(2) + (p.y - o.y).powi(2)).sqrt();
+                         if dist < (p.radius + 15.0) { // Snowman radius ~15
+                             // Hit Snowman!
+                             p.score = p.score.saturating_sub(10);
+                             p.invuln_timer = 60; // 1s invuln
+                             turbo::audio::play("hit");
+                             
+                             self.floating_texts.push(FloatingText {
+                                x: p.x,
+                                y: p.y - 20.0,
+                                text: "-10".to_string(),
+                                color: 0xFF0000FF,
+                                life: 60,
+                             });
+                         }
+                     }
+                 }
+             }
+             
+             // Power House Logic
+             let mut new_house_pos = None;
+             let mut house_idx = 0;
+             
+             for (i, h) in self.houses.iter_mut().enumerate() {
+                 if h.is_high_value {
+                     if h.gift_timer > 0 {
+                         h.gift_timer -= 1;
+                     } else {
+                         // Spawn Risky Gift!
+                         h.gift_timer = 15 * 60; // Reset 15s
+                         
+                         // Determine Effect (+60 or -60)
+                         let is_good = (random::u32() % 2) == 0;
+                         let val = if is_good { 60 } else { -60 };
+                         
+                         // Spawn Powerup near house
+                         self.powerups.push(PowerUp {
+                             x: h.x + 20.0,
+                             y: h.y + 20.0, // Offset slightly
+                             kind: 2, // 2 = Risky
+                             collected: false,
+                             value: val, 
+                         });
+                         
+                         // Trigger Teleport
+                         new_house_pos = Some((0.0, 0.0)); // Placeholder to trigger logic below
+                         house_idx = i;
+                     }
+                 }
+             }
+             
+             // Handle Teleportation outside the loop to avoid borrow checker issues
+             if let Some(_) = new_house_pos {
+                 let mut rng = random::u32();
+                 let mut attempts = 0;
+                 let mut placed = false;
+                 
+                 while !placed && attempts < 100 {
+                     attempts += 1;
+                     rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                     let nx = 40.0 + (rng % 432) as f32;
+                     rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                     let ny = 40.0 + (rng % 208) as f32;
+                     
+                     // River Check
+                     if nx > 236.0 && nx < 276.0 { continue; }
+                     
+                     let mut safe = true;
+                     for o in &self.obstacles {
+                         if ((o.x - nx).powi(2) + (o.y - ny).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                     }
+                     if safe {
+                         for (i, h) in self.houses.iter().enumerate() {
+                             if i != house_idx {
+                                 if ((h.x - nx).powi(2) + (h.y - ny).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                             }
+                         }
+                     }
+                     
+                     if safe {
+                         self.houses[house_idx].x = nx;
+                         self.houses[house_idx].y = ny;
+                         placed = true;
+                         
+                         // Teleport Poof Particle
+                         for _ in 0..10 {
+                              self.particles.push(MParticle {
+                                  x: nx, y: ny,
+                                  vx: ((random::u32() % 10) as f32 - 5.0) * 0.5,
+                                  vy: ((random::u32() % 10) as f32 - 5.0) * 0.5,
+                                  life: 30,
+                                  color: 0xFFD700FF,
+                              });
+                         }
+                     }
+                 }
+             }
+        }
+        
         
         // Powerup Interaction
          for pu in self.powerups.iter_mut() {
@@ -751,7 +926,7 @@ impl MultiplayerGame {
                             color: 0xFFD700FF,
                             life: 60,
                         });
-                     } else {
+                     } else if pu.kind == 1 {
                          // Bolt: Speed
                          player.boost_timer = 300; // 5s
                          // Text Pop
@@ -760,6 +935,30 @@ impl MultiplayerGame {
                             y: pu.y - 10.0,
                             text: "SPEED!".to_string(),
                             color: 0x00E5FFFF,
+                            life: 60,
+                        });
+                     } else {
+                         // Risky Gift (Kind 2)
+                         let val = pu.value;
+                         let text_col;
+                         let text_str;
+                         
+                         if val >= 0 {
+                             player.score += val as u32;
+                             text_col = 0xFFD700FF; // Gold
+                             text_str = format!("+{}", val);
+                         } else {
+                             let pen = (-val) as u32;
+                             player.score = player.score.saturating_sub(pen);
+                             text_col = 0xFF0000FF; // Red
+                             text_str = format!("{}", val);
+                         }
+                         
+                         self.floating_texts.push(FloatingText {
+                            x: pu.x,
+                            y: pu.y - 10.0,
+                            text: text_str,
+                            color: text_col,
                             life: 60,
                         });
                      }
@@ -798,7 +997,7 @@ impl MultiplayerGame {
              self.update_level2();
          }
          // Level 3 Mechanics
-         if self.current_level == 3 {
+         if self.current_level >= 3 {
              self.update_level3();
          }
     }
@@ -853,6 +1052,7 @@ impl MultiplayerGame {
                     last_collection_time: 0,
                     is_high_value: false,
                     team: 0,
+                    gift_timer: 0,
                 });
             }
         }
@@ -950,7 +1150,7 @@ impl MultiplayerGame {
                              let oy = 60.0 + (rng % 168) as f32;
                              let mut safe = true;
                              // Level 3 Check: Water (Strict Ban on entire strip including bridges)
-                             if self.current_level == 3 {
+                             if self.current_level >= 3 {
                                  if ox > 236.0 && ox < 276.0 { safe = false; } // Ban entire strip
                              }
                              
@@ -1231,7 +1431,7 @@ impl MultiplayerGame {
         rect!(w=512, h=288, color=0xC8E6C9FF); 
 
         // 1b. Level 3 Terrain (Water/Bridges) - Draw FIRST
-        if self.current_level == 3 {
+        if self.current_level >= 3 {
             // Vertical Water Strip
             rect!(x=236, y=0, w=40, h=288, color=0x29B6F6FF); 
             
@@ -1247,7 +1447,7 @@ impl MultiplayerGame {
         }
         
          // Draw Shadows (Level 3)
-        if self.current_level == 3 {
+        if self.current_level >= 3 {
              for (_i, p) in self.players.iter().enumerate() {
                  let col = if p.id == 1 { 0xD32F2F44 } else { 0x1976D244 }; // Transparent Red/Blue
                  for t in &p.shadow_trail {
@@ -1312,7 +1512,8 @@ impl MultiplayerGame {
             
             // Draw Glow if active (Soft blue glow instead of pulsing yellow)
             if active {
-                 circ!(x=x, y=y, d=32, color=0x00E5FF22); // Static soft glow
+                 let glow_col = if h.is_high_value { 0xFFD70044 } else { 0x00E5FF22 }; // Gold glow for Power House
+                 circ!(x=x, y=y, d=32, color=glow_col); 
             }
             
             // ... (Procedural House Drawing Block - Same as existing, assume preserved by context match or manual re-insertion if needed. Wait, ReplaceFileContent replaces everything in range. I need to include the House Draw logic or use a generic "Draw House" comment if I don't want to rewrite it.
@@ -1438,6 +1639,32 @@ impl MultiplayerGame {
                 rect!(x=x+w-4, y=y+2, w=2, h=2, color=0x8D6E63FF);
                 rect!(x=x+2, y=y+h-4, w=2, h=2, color=0x8D6E63FF);
                 rect!(x=x+w-4, y=y+h-4, w=2, h=2, color=0x8D6E63FF);
+            } else if o.kind == 2 { // Snowman (Level 4)
+                let sx = x; 
+                let sy = y;
+                // Body (Bottom)
+                circ!(x=sx, y=sy+14, d=20, color=0xFFFFFFFF);
+                // Body (Mid)
+                circ!(x=sx+2, y=sy+6, d=16, color=0xFFFFFFFF);
+                // Head (Top)
+                circ!(x=sx+5, y=sy-4, d=12, color=0xFFFFFFFF);
+                
+                // Face
+                rect!(x=sx+8, y=sy-2, w=2, h=2, color=0x212121FF); // Eye L
+                rect!(x=sx+12, y=sy-2, w=2, h=2, color=0x212121FF); // Eye R
+                rect!(x=sx+11, y=sy, w=4, h=2, color=0xFF9800FF); // Carrot
+                
+                // Hat (Top Hat)
+                rect!(x=sx+4, y=sy-6, w=14, h=2, color=0x212121FF); // Brim
+                rect!(x=sx+6, y=sy-12, w=10, h=6, color=0x212121FF); // Cap
+                
+                // Arms
+                rect!(x=sx-6, y=sy+8, w=8, h=2, color=0x5D4037FF); // L
+                rect!(x=sx+18, y=sy+8, w=8, h=2, color=0x5D4037FF); // R
+                
+                // Scarf (Red)
+                rect!(x=sx+6, y=sy+2, w=10, h=4, color=0xD32F2FFF);
+                rect!(x=sx+12, y=sy+4, w=3, h=8, color=0xD32F2FFF);
             }
         }
         
@@ -1496,7 +1723,7 @@ impl MultiplayerGame {
                      rect!(x=px-9, y=py_anim+5, w=1, h=1, color=0xFFFFFFFF);
                  }
 
-             } else { 
+             } else if pu.kind == 1 { 
                  // Speed Boost (Winged Electric Boot)
                  let bob = ((self.frame_count / 15) % 2) as i32;
                  let py_anim = py - bob;
@@ -1556,8 +1783,33 @@ impl MultiplayerGame {
                  
                  // 6. Sparkles
                  if self.frame_count % 20 < 10 {
-                    rect!(x=hx-9, y=hy-9, w=2, h=2, color=0xFFFFFFFF);
-                 }
+                     rect!(x=hx-9, y=hy-9, w=2, h=2, color=0xFFFFFFFF);
+                  }
+             } else {
+                 // Risky Gift (Mystery Box - Purple)
+                 let bob = ((self.frame_count / 12) % 2) as i32;
+                 let py_anim = py - bob;
+                 
+                 // Purple Glow
+                 circ!(x=px, y=py_anim, d=24, color=0x9C27B044);
+                 
+                 let w = 14;
+                 let h_front = 12;
+                 let h_top = 5;
+                 let bx = px - w/2; 
+                 let by = py_anim - h_front/2;
+                 
+                 // Box (Purple)
+                 rect!(x=bx, y=by, w=w as u32, h=h_front as u32, color=0x7B1FA2FF);
+                 rect!(x=bx, y=by - h_top + 1, w=w as u32, h=h_top as u32, color=0x9C27B0FF);
+                 
+                 // Ribbon (Yellow/Gold)
+                 rect!(x=px-2, y=by, w=4, h=h_front as u32, color=0xFFD700FF);
+                 rect!(x=px-2, y=by - h_top + 1, w=4, h=h_top as u32, color=0xFFD700FF);
+                 rect!(x=bx, y=by - h_top + 3, w=w as u32, h=2, color=0xFFD700FF);
+                 
+                 // Question Mark
+                 text!("?", x=bx+4, y=by+2, font="small", color=0xFFFFFFFF);
              }
         }
 
