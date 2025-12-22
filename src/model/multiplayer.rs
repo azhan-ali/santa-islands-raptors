@@ -11,6 +11,7 @@ pub struct MPlayer {
     pub score: u32,
     pub radius: f32,
     pub boost_timer: u32,
+    pub name: String,
 }
 
 #[turbo::serialize]
@@ -97,10 +98,13 @@ pub struct MultiplayerGame {
     pub frame_count: u32,
     pub next_level_timer: u32,
     pub last_pickup_pos: (f32, f32), // Track last pickup to avoid respawn nearby
+    pub p1_name: String,
+    pub p2_name: String,
+    pub max_time_minutes: u32,
 }
 
 impl MultiplayerGame {
-    pub fn new() -> Self {
+    pub fn new(p1: String, p2: String, minutes: u32) -> Self {
         let mut game = Self {
             players: vec![],
             houses: vec![],
@@ -115,12 +119,15 @@ impl MultiplayerGame {
             }).collect(),
             decors: vec![], // Init in init_level
             floating_texts: vec![],
-            timer: 180,
+            timer: minutes * 60,
             game_over: false,
             winner_text: "".to_string(),
             frame_count: 0,
             next_level_timer: 0,
             last_pickup_pos: (0.0, 0.0),
+            p1_name: p1,
+            p2_name: p2,
+            max_time_minutes: minutes,
         };
         game.init_level(1);
         game
@@ -137,6 +144,7 @@ impl MultiplayerGame {
                 score: 0,
                 radius: 8.0,
                 boost_timer: 0,
+                name: self.p1_name.clone(),
             },
             MPlayer {
                 x: 462.0,
@@ -146,6 +154,7 @@ impl MultiplayerGame {
                 score: 0,
                 radius: 8.0,
                 boost_timer: 0,
+                name: self.p2_name.clone(),
             },
         ];
 
@@ -499,15 +508,35 @@ impl MultiplayerGame {
         for d in &self.decors {
             let dx = d.x as i32;
             let dy = d.y as i32;
-            if d.kind == 0 { // Tree
+            if d.kind == 0 { // Small Festive Tree
                  // Trunk
-                 rect!(x=dx, y=dy, w=4, h=6, color=0x5D4037FF); 
-                 // Leaves (Pyramid)
-                 rect!(x=dx-6, y=dy-4, w=16, h=6, color=0x2E7D32FF); // Base
-                 rect!(x=dx-4, y=dy-8, w=12, h=5, color=0x2E7D32FF); // Mid
-                 rect!(x=dx-2, y=dy-11, w=8, h=4, color=0x2E7D32FF); // Top
-                 // Snow Cap
-                 rect!(x=dx-2, y=dy-11, w=8, h=2, color=0xFFFFFFFF);
+                 rect!(x=dx-1, y=dy+4, w=2, h=4, color=0x5D4037FF); 
+                 
+                 // Bottom Layer
+                 rect!(x=dx-5, y=dy, w=10, h=4, color=0x2E7D32FF);
+                 rect!(x=dx-6, y=dy+1, w=1, h=2, color=0xFFFFFFFF); // Snow tip L
+                 rect!(x=dx+5, y=dy+1, w=1, h=2, color=0xFFFFFFFF); // Snow tip R
+
+                 // Mid Layer
+                 rect!(x=dx-4, y=dy-3, w=8, h=3, color=0x2E7D32FF);
+                 rect!(x=dx-5, y=dy-2, w=1, h=2, color=0xFFFFFFFF); // Snow tip L
+                 rect!(x=dx+4, y=dy-2, w=1, h=2, color=0xFFFFFFFF); // Snow tip R
+
+                 // Top Layer
+                 rect!(x=dx-2, y=dy-6, w=4, h=3, color=0x2E7D32FF);
+                 
+                 // Star / Top
+                 rect!(x=dx-1, y=dy-7, w=2, h=2, color=0xFFD700FF); // Gold Tip
+
+                 // Ornaments (Red/Gold dots)
+                 if (dx + dy) % 3 == 0 {
+                    rect!(x=dx-2, y=dy+2, w=1, h=1, color=0xD32F2FFF); // Red
+                    rect!(x=dx+1, y=dy-1, w=1, h=1, color=0xFFD700FF); // Gold
+                 } else {
+                    rect!(x=dx+2, y=dy+2, w=1, h=1, color=0xD32F2FFF);
+                    rect!(x=dx-1, y=dy-2, w=1, h=1, color=0xFFFFFFFF); // White bulb
+                 }
+
             } else { // Snow Pile
                  rect!(x=dx, y=dy, w=12, h=8, color=0xFFFFFFFF);
                  rect!(x=dx+2, y=dy+2, w=8, h=4, color=0xEEEEEEFF); // Shading
@@ -793,11 +822,12 @@ impl MultiplayerGame {
         }
 
         // HUD (Dark Text for Light BG)
-        let p1_text = format!("P1: {}", self.players[0].score);
+        let p1_text = format!("{}: {}", self.players[0].name, self.players[0].score);
         text!(&p1_text, x=10, y=10, color=0xB71C1CFF); // Dark Red
         
-        let p2_text = format!("P2: {}", self.players[1].score);
-        text!(&p2_text, x=450, y=10, color=0x0D47A1FF); // Dark Blue
+        let p2_text = format!("{}: {}", self.players[1].name, self.players[1].score);
+        let w = (p2_text.len() * 8) as i32;
+        text!(&p2_text, x=502 - w, y=10, color=0x0D47A1FF); // Dark Blue
         
         let mins = self.timer / 60;
         let secs = self.timer % 60;

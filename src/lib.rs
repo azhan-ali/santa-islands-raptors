@@ -8,6 +8,7 @@ pub use model::*;
 enum AppState {
     Menu,
     SinglePlayer,
+    MultiplayerSetup,
     Multiplayer,
     Developer,
 }
@@ -29,7 +30,13 @@ struct GameState {
     transition_timer: u32,
     music_started: bool,
     multiplayer_game: Option<MultiplayerGame>,
-    // Add other game state fields here later
+    // Game Setup State
+    p1_name: String,
+    p2_name: String,
+    mp_duration: u32,
+    mp_setup_row: u8, // 0=P1, 1=P2, 2=Time, 3=Start
+    mp_edit_cursor: usize,
+    mp_is_editing: bool,
 }
 
 impl GameState {
@@ -47,6 +54,12 @@ impl GameState {
             transition_timer: 0,
             music_started: false,
             multiplayer_game: None,
+            p1_name: "PLAYER 1".to_string(),
+            p2_name: "PLAYER 2".to_string(),
+            mp_duration: 3,
+            mp_setup_row: 0,
+            mp_edit_cursor: 0,
+            mp_is_editing: false,
         }
     }
 
@@ -69,7 +82,8 @@ impl GameState {
             match self.state {
                 AppState::Menu => self.update_menu(),
                 AppState::SinglePlayer => self.update_single_player_menu(),
-                AppState::Multiplayer => self.update_multiplayer(), // Placeholder
+                AppState::MultiplayerSetup => self.update_multiplayer_setup(),
+                AppState::Multiplayer => self.update_multiplayer(),
                 AppState::Developer => self.update_developer(),
             }
         }
@@ -98,7 +112,11 @@ impl GameState {
             self.transition_timer = 10; // Reduce delay
             match self.menu_option {
                 MenuOption::SinglePlayer => self.state = AppState::SinglePlayer,
-                MenuOption::Multiplayer => self.state = AppState::Multiplayer,
+                MenuOption::Multiplayer => {
+                    self.state = AppState::MultiplayerSetup;
+                    self.mp_setup_row = 0; // Reset cursor
+                    self.mp_is_editing = false;
+                },
                 MenuOption::Developer => self.state = AppState::Developer,
             }
         }
@@ -132,9 +150,10 @@ impl GameState {
     }
     
     fn update_multiplayer(&mut self) {
-        // Initialize if not present
+        // Initialize if not present (SHOULD NOT HAPPEN via Setup, but safe fallback)
         if self.multiplayer_game.is_none() {
-            self.multiplayer_game = Some(MultiplayerGame::new());
+            // Default fallback
+             self.multiplayer_game = Some(MultiplayerGame::new("Santa".to_string(), "Rival".to_string(), 3));
         }
 
         if let Some(game) = &mut self.multiplayer_game {
@@ -152,6 +171,106 @@ impl GameState {
         if gamepad::get(0).b.just_pressed() {
             self.state = AppState::Menu;
             self.transition_timer = 10;
+        }
+    }
+    
+    fn update_multiplayer_setup(&mut self) {
+        let gp = gamepad::get(0);
+
+        if self.mp_is_editing {
+            // EDIT MODE
+            let target_name = if self.mp_setup_row == 0 { &mut self.p1_name } else { &mut self.p2_name };
+            
+            // Cursor Move
+            if gp.left.just_pressed() {
+                if self.mp_edit_cursor > 0 { self.mp_edit_cursor -= 1; }
+            }
+            if gp.right.just_pressed() {
+                if self.mp_edit_cursor < 9 { // Max length 10
+                    if self.mp_edit_cursor >= target_name.len() {
+                         target_name.push(' '); // Auto extend
+                    }
+                    self.mp_edit_cursor += 1;
+                }
+            }
+            
+            // Be sure string is long enough
+            while target_name.len() <= self.mp_edit_cursor {
+                target_name.push(' ');
+            }
+            target_name.truncate(10); // Hard limit
+
+            // Character Change
+            if gp.up.just_pressed() || gp.down.just_pressed() {
+                let mut chars: Vec<char> = target_name.chars().collect();
+                let mut c = chars[self.mp_edit_cursor];
+                // Cycle: Space -> A..Z -> Space
+                // ASCII: Space=32, A=65, Z=90
+                let delta = if gp.up.just_pressed() { 1 } else { -1 };
+                
+                let mut next_byte = c as i16 + delta;
+                if next_byte < 32 { next_byte = 90; } // Wrap to Z
+                else if next_byte > 90 { next_byte = 32; } // Wrap to Space
+                else if next_byte > 32 && next_byte < 65 { 
+                     // Skip non-alphas
+                     if delta > 0 { next_byte = 65; } else { next_byte = 32; }
+                }
+                
+                c = next_byte as u8 as char;
+                chars[self.mp_edit_cursor] = c;
+                *target_name = chars.into_iter().collect();
+            }
+            
+            // Stop Editing
+            if gp.b.just_pressed() || gp.start.just_pressed() || gp.a.just_pressed() {
+                self.mp_is_editing = false;
+                // Trim trailing spaces
+                *target_name = target_name.trim().to_string();
+                if target_name.is_empty() {
+                    *target_name = if self.mp_setup_row == 0 { "PLAYER 1".to_string() } else { "PLAYER 2".to_string() };
+                }
+            }
+            
+        } else {
+            // NAVIGATION MODE
+            
+            // Navigation (Up/Down)
+            if gp.up.just_pressed() {
+                if self.mp_setup_row > 0 { self.mp_setup_row -= 1; }
+            }
+            if gp.down.just_pressed() {
+                if self.mp_setup_row < 3 { self.mp_setup_row += 1; }
+            }
+            
+            // Row Interaction
+            match self.mp_setup_row {
+                0 | 1 => { // Names
+                    if gp.a.just_pressed() || gp.start.just_pressed() {
+                        self.mp_is_editing = true;
+                        self.mp_edit_cursor = 0;
+                    }
+                },
+                2 => { // Duration
+                    if gp.left.just_pressed() && self.mp_duration > 1 { self.mp_duration -= 1; }
+                    if gp.right.just_pressed() && self.mp_duration < 10 { self.mp_duration += 1; }
+                },
+                3 => { // Start
+                    if gp.start.just_pressed() || gp.a.just_pressed() {
+                         let p1 = self.p1_name.clone();
+                         let p2 = self.p2_name.clone();
+                         self.multiplayer_game = Some(MultiplayerGame::new(p1, p2, self.mp_duration));
+                         self.state = AppState::Multiplayer;
+                         self.transition_timer = 10;
+                    }
+                },
+                _ => {}
+            }
+            
+            // Back
+            if gp.b.just_pressed() {
+                self.state = AppState::Menu;
+                self.transition_timer = 10;
+            }
         }
     }
 
@@ -174,6 +293,7 @@ impl GameState {
         match self.state {
             AppState::Menu => self.draw_menu(),
             AppState::SinglePlayer => self.draw_single_player_menu(),
+            AppState::MultiplayerSetup => self.draw_multiplayer_setup(),
             AppState::Multiplayer => {
                 if let Some(game) = &self.multiplayer_game {
                     game.draw();
@@ -184,7 +304,84 @@ impl GameState {
             AppState::Developer => self.draw_developer(),
         }
     }
+    
+    fn draw_multiplayer_setup(&self) {
+        // Title
+        text!("MULTIPLAYER SETUP", x = 180, y = 40, font = "large", color = 0xFFFF00FF);
+        
+        // Helper
+        let center_x = |text: &str, font_w: i32| -> i32 {
+            (512 - (text.len() as i32 * font_w)) / 2
+        };
 
+        let start_y = 90;
+        let gap = 50;
+        
+        let editing = self.mp_is_editing;
+        
+        // P1
+        let p1_col = if self.mp_setup_row == 0 { 0x00FF00FF } else { 0xAAAAAAFF };
+        text!("Player 1 Name:", x = 100, y = start_y, font="medium", color = p1_col);
+        
+        // Box P1
+        let p1_box_col = if self.mp_setup_row == 0 && editing { 0xFFFF00FF } else { 0xFFFFFFFF };
+        rect!(x=260, y=start_y-2, w=140, h=14, color=p1_box_col); 
+        rect!(x=261, y=start_y-1, w=138, h=12, color=0x000000FF); 
+        
+        // Render P1 chars
+        let p1_str = &self.p1_name;
+        for (i, c) in p1_str.chars().enumerate() {
+            let cx = 270 + (i as i32 * 10);
+            let s = c.to_string();
+            text!(&s, x=cx, y=start_y+1, font="medium", color=0xFFFFFFFF);
+            // Cursor
+            if self.mp_setup_row == 0 && editing && i == self.mp_edit_cursor {
+                 rect!(x=cx, y=start_y+11, w=8, h=2, color=0xFFFF00FF);
+            }
+        }
+        if self.mp_setup_row == 0 && !editing { text!("(Press SPACE to Edit)", x=410, y=start_y+2, font="small", color=0x666666FF); }
+
+
+        // P2
+        let p2_col = if self.mp_setup_row == 1 { 0x00FF00FF } else { 0xAAAAAAFF };
+        text!("Player 2 Name:", x = 100, y = start_y + gap, font="medium", color = p2_col);
+        
+        // Box P2
+        let p2_box_col = if self.mp_setup_row == 1 && editing { 0xFFFF00FF } else { 0xFFFFFFFF };
+        rect!(x=260, y=start_y+gap-2, w=140, h=14, color=p2_box_col);
+        rect!(x=261, y=start_y+gap-1, w=138, h=12, color=0x000000FF);
+        
+        let p2_str = &self.p2_name;
+        for (i, c) in p2_str.chars().enumerate() {
+            let cx = 270 + (i as i32 * 10);
+            let s = c.to_string();
+            text!(&s, x=cx, y=start_y+gap+1, font="medium", color=0xFFFFFFFF);
+            // Cursor
+            if self.mp_setup_row == 1 && editing && i == self.mp_edit_cursor {
+                 rect!(x=cx, y=start_y+gap+11, w=8, h=2, color=0xFFFF00FF);
+            }
+        }
+        if self.mp_setup_row == 1 && !editing { text!("(Press SPACE to Edit)", x=410, y=start_y+gap+2, font="small", color=0x666666FF); }
+
+        // Time
+        let time_col = if self.mp_setup_row == 2 { 0x00FF00FF } else { 0xAAAAAAFF };
+        text!("Duration:", x = 100, y = start_y + gap*2, font="medium", color = time_col);
+        let time_val = format!(" < {} mins > ", self.mp_duration);
+        text!(&time_val, x=270, y=start_y+gap*2, font="medium", color=if self.mp_setup_row == 2 { 0xFFFFFFFF } else { 0x888888FF });
+
+        // Start
+        let btn_y = 230;
+        let btn_w = 120;
+        let btn_x = (512 - btn_w) / 2;
+        let is_btn = self.mp_setup_row == 3;
+        
+        let btn_col = if is_btn { 0x00E676FF } else { 0x444444FF };
+        let txt_col = if is_btn { 0x000000FF } else { 0xAAAAAAFF };
+        
+        rect!(x=btn_x as i32, y=btn_y, w=btn_w as u32, h=30, color=btn_col);
+        text!("START GAME", x = center_x("START GAME", 8), y = btn_y + 10, font="large", color=txt_col);
+    }
+    
     fn draw_menu(&self) {
         // Custom Pixel Title
         let scale = 4; // Reduced scale to fit better
