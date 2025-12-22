@@ -96,8 +96,14 @@ impl GameState {
         // Actually, let's just interpret "Shift + I" as "Select" button for now or add a debug toggle.
         // Or better: Toggle on 'Select' button press.
         // Check Select (Shift) or Y (S key)
+        // Check Select (Shift) or Y (S key) to toggle
         if gamepad::get(0).select.just_pressed() || gamepad::get(0).y.just_pressed() {
             self.show_instructions = !self.show_instructions;
+        }
+        
+        // Also allow closing with B if open
+        if self.show_instructions && gamepad::get(0).b.just_pressed() {
+             self.show_instructions = false;
         }
 
         // Music Loop
@@ -106,7 +112,10 @@ impl GameState {
              self.music_started = true;
         }
 
-        if self.transition_timer > 0 {
+        if self.show_instructions {
+            // If instructions are open, DO NOT update the rest of the game state.
+            // This prevents accidental clicks and "auto-closing" issues if keys overlap.
+        } else if self.transition_timer > 0 {
             self.transition_timer -= 1;
             // Don't process input while transitioning
         } else {
