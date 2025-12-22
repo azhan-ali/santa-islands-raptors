@@ -16,6 +16,7 @@ enum AppState {
     SinglePlayerSleigh,
     SinglePlayerBreaker,
     SinglePlayerStealth,
+    SinglePlayerInstructions,
     Developer,
 }
 
@@ -49,6 +50,7 @@ struct GameState {
     mp_edit_cursor: usize,
     mp_is_editing: bool,
     show_instructions: bool,
+    frame_count: u32,
 }
 
 impl GameState {
@@ -78,10 +80,12 @@ impl GameState {
             mp_setup_row: 0,
             mp_edit_cursor: 0,
             mp_is_editing: false,
+            frame_count: 0,
         }
     }
 
     fn update(&mut self) {
+        self.frame_count += 1;
         // Update Snow
         for flake in self.snow.iter_mut() {
             flake.update();
@@ -108,7 +112,8 @@ impl GameState {
         }
 
         // Music Loop
-        if !self.music_started {
+        // Music Loop (Ensure it plays)
+        if !self.music_started || (self.frame_count % 300 == 0) {
              turbo::audio::play("home_music");
              self.music_started = true;
         }
@@ -131,6 +136,7 @@ impl GameState {
                 AppState::SinglePlayerSleigh => self.update_single_player_sleigh(),
                 AppState::SinglePlayerBreaker => self.update_single_player_breaker(),
                 AppState::SinglePlayerStealth => self.update_single_player_stealth(),
+                AppState::SinglePlayerInstructions => self.update_single_player_instructions(),
                 AppState::Developer => self.update_developer(),
             }
         }
@@ -195,20 +201,16 @@ impl GameState {
         // Select (Launch specific game)
         if gamepad::get(0).a.just_pressed() || gamepad::get(0).start.just_pressed() {
              if self.mode_selection == 0 { // Gift Packing
-                 self.factory_game = Some(FactoryGame::new());
-                 self.state = AppState::SinglePlayerFactory;
+                 self.state = AppState::SinglePlayerInstructions;
                  self.transition_timer = 10;
              } else if self.mode_selection == 1 { // Reindeer Training (Sleigh)
-                 self.sleigh_game = Some(SleighGame::new());
-                 self.state = AppState::SinglePlayerSleigh;
+                 self.state = AppState::SinglePlayerInstructions;
                  self.transition_timer = 10;
              } else if self.mode_selection == 2 { // Santa Breaker (Breaker)
-                 self.breaker_game = Some(BreakerGame::new());
-                 self.state = AppState::SinglePlayerBreaker;
+                 self.state = AppState::SinglePlayerInstructions;
                  self.transition_timer = 10;
              } else if self.mode_selection == 3 { // Silent Santa (Stealth)
-                 self.stealth_game = Some(StealthGame::new());
-                 self.state = AppState::SinglePlayerStealth;
+                 self.state = AppState::SinglePlayerInstructions;
                  self.transition_timer = 10;
              }
              // Other modes not implemented yet
@@ -519,6 +521,135 @@ impl GameState {
         text!(footer2, x=center_x(footer2, 5), y=260, font="small", color=0xAAAAAAFF);
     }
 
+
+    fn update_single_player_instructions(&mut self) {
+        let gp = gamepad::get(0);
+        let kb = turbo::keyboard::get();
+        
+        // SPACE or START to Start Game
+        if gp.start.just_pressed() || gp.a.just_pressed() || kb.space().just_pressed() {
+            // Launch specific game based on selection
+            if self.mode_selection == 0 { // Gift Packing
+                  self.factory_game = Some(FactoryGame::new());
+                  self.state = AppState::SinglePlayerFactory;
+            } else if self.mode_selection == 1 { // Sleigh
+                  self.sleigh_game = Some(SleighGame::new());
+                  self.state = AppState::SinglePlayerSleigh;
+            } else if self.mode_selection == 2 { // Breaker
+                  self.breaker_game = Some(BreakerGame::new());
+                  self.state = AppState::SinglePlayerBreaker;
+            } else if self.mode_selection == 3 { // Stealth
+                  self.stealth_game = Some(StealthGame::new());
+                  self.state = AppState::SinglePlayerStealth;
+            }
+            self.transition_timer = 10;
+        }
+        
+        // B to Go Back to Single Player Menu
+        if gp.b.just_pressed() || kb.escape().just_pressed() {
+            self.state = AppState::SinglePlayer;
+            self.transition_timer = 10;
+        }
+    }
+    
+    fn draw_single_player_instructions(&self) {
+        let center_x = |text: &str, font_w: i32| -> i32 { (512 - (text.len() as i32 * font_w)) / 2 };
+        
+        let title;
+        let overview;
+        let mut lines = vec![];
+        let controls;
+        let win_cond;
+        let lose_cond;
+        
+        if self.mode_selection == 0 {
+             title = "GIFT PACKING";
+             overview = "Help Santa sort gifts correctly!";
+             lines.push("Gifts spawn on the top belt.");
+             lines.push("Pick up gifts (Blue, Green, Purple).");
+             lines.push("Drop them into the matching colored Bin.");
+             lines.push("+100 Points for Correct Bin.");
+             lines.push("-50 Points for Wrong Bin.");
+             controls = "Move: Arrows | Action: A / Space";
+             win_cond = "Score as high as possible in 60s!";
+             lose_cond = "Time runs out.";
+        } else if self.mode_selection == 1 {
+             title = "RAINDEER RUSH";
+             overview = "Fly the sleigh and defend spread joy!";
+             lines.push("Fly Santa's Sleigh through the sky.");
+             lines.push("Shoot magic at flying enemies.");
+             lines.push("Avoid crashing into enemies.");
+             lines.push("Survive as difficulty increases.");
+             controls = "Move: Arrows | Shoot: A / Space";
+             win_cond = "Survive longer for high score!";
+             lose_cond = "Running out of Lives.";
+        } else if self.mode_selection == 2 {
+             title = "SANTA BREAKER";
+             overview = "Break all bricks to clear levels!";
+             lines.push("Bounce the Santa Ball off the paddle.");
+             lines.push("Destroy all festive bricks.");
+             lines.push("Don't let the ball fall!");
+             lines.push("Advance through multiple levels.");
+             controls = "Move: Left/Right | Launch: A / Space";
+             win_cond = "Clear all bricks.";
+             lose_cond = "Lose all lives (Ball drops).";
+        } else if self.mode_selection == 3 {
+             title = "SANTA MISSION";
+             overview = "Deliver gifts without being seen!";
+             lines.push("Sneak past sleeping dogs and patrol wolves.");
+             lines.push("Place 3 Gifts at targets.");
+             lines.push("Eat the Cookie in the Kitchen.");
+             lines.push("Collect 5 Stars.");
+             controls = "Move: Arrows | Stop: Quiet Down";
+             win_cond = "Complete all tasks & Exit.";
+             lose_cond = "Getting CAUGHT by a dog.";
+        } else {
+             title = "UNKNOWN MODE";
+             overview = "";
+             controls = "";
+             win_cond = "";
+             lose_cond = "";
+        }
+        
+        // Draw
+        text!(title, x = center_x(title, 8), y = 15, font = "large", color = 0xFFFF00FF);
+        text!(overview, x = center_x(overview, 5), y = 40, font = "medium", color = 0x00FFFFFF);
+        
+        let start_y = 65;
+        let gap = 15;
+        let x_left = 60;
+        
+        // Gameplay Lines
+        lines.insert(0, "How to Play:");
+        for (i, line) in lines.iter().enumerate() {
+             let iter_line: &str = line;
+             let col = if iter_line.ends_with(':') { 0xFFD700FF } else { 0xFFFFFFFF };
+             text!(iter_line, x=x_left, y=start_y + (i as i32 * gap), font="medium", color=col);
+        }
+        
+        let mut y = start_y + (lines.len() as i32) * gap + 5;
+        
+        text!("Controls:", x=x_left, y=y, font="medium", color=0xFFD700FF);
+        y += gap;
+        text!(controls, x=x_left, y=y, font="medium", color=0xFFFFFFFF);
+        y += gap + 5;
+
+        text!("Win Condition:", x=x_left, y=y, font="medium", color=0xFFD700FF);
+        y += gap;
+        text!(win_cond, x=x_left, y=y, font="medium", color=0x2ECC71FF);
+        y += gap + 5;
+
+        text!("Lose Condition:", x=x_left, y=y, font="medium", color=0xFFD700FF);
+        y += gap;
+        text!(lose_cond, x=x_left, y=y, font="medium", color=0xE74C3CFF);
+        
+        // Footer (Fixed at bottom)
+        let footer1 = "Press SPACE to START GAME";
+        let footer2 = "Press B / ESC to Go Back";
+        text!(footer1, x=center_x(footer1, 5), y=250, font="medium", color=0x00FF00FF);
+        text!(footer2, x=center_x(footer2, 5), y=270, font="small", color=0xAAAAAAFF);
+    }
+
     fn update_developer(&mut self) {
         if gamepad::get(0).b.just_pressed() {
             self.state = AppState::Menu;
@@ -568,6 +699,7 @@ impl GameState {
                     game.draw();
                 }
             },
+            AppState::SinglePlayerInstructions => self.draw_single_player_instructions(),
             AppState::Developer => self.draw_developer(),
         }
         
