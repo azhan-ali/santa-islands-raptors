@@ -11,6 +11,7 @@ pub struct MPlayer {
     pub score: u32,
     pub radius: f32,
     pub boost_timer: u32,
+    pub invuln_timer: u32,
     pub name: String,
 }
 
@@ -32,6 +33,7 @@ pub struct Obstacle {
     pub y: f32,
     pub w: f32,
     pub h: f32,
+    pub respawn_timer: u32,
 }
 
 #[turbo::serialize]
@@ -101,10 +103,15 @@ pub struct MultiplayerGame {
     pub p1_name: String,
     pub p2_name: String,
     pub max_time_minutes: u32,
+    pub current_level: u32,
+    // Level 2 Specifics
+    pub shuffle_timer: u32,
+    pub is_shuffling: bool,
+    pub shuffle_pause_timer: u32,
 }
 
 impl MultiplayerGame {
-    pub fn new(p1: String, p2: String, minutes: u32) -> Self {
+    pub fn new(p1: String, p2: String, minutes: u32, level: u32) -> Self {
         let mut game = Self {
             players: vec![],
             houses: vec![],
@@ -128,8 +135,12 @@ impl MultiplayerGame {
             p1_name: p1,
             p2_name: p2,
             max_time_minutes: minutes,
+            current_level: level,
+            shuffle_timer: 0,
+            is_shuffling: false,
+            shuffle_pause_timer: 0,
         };
-        game.init_level(1);
+        game.init_level(level);
         game
     }
 
@@ -144,6 +155,7 @@ impl MultiplayerGame {
                 score: 0,
                 radius: 8.0,
                 boost_timer: 0,
+                invuln_timer: 0,
                 name: self.p1_name.clone(),
             },
             MPlayer {
@@ -154,43 +166,56 @@ impl MultiplayerGame {
                 score: 0,
                 radius: 8.0,
                 boost_timer: 0,
+                invuln_timer: 0,
                 name: self.p2_name.clone(),
             },
         ];
 
-        // Random Houses (Non-overlapping)
-        self.houses = vec![];
-        let mut rng = random::u32();
-        let mut attempts = 0;
+        // Level Configuration
+        let house_count = if _level == 2 { 14 } else { 10 };
         
-        while self.houses.len() < 10 && attempts < 100 {
-            attempts += 1;
-            rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
-            let hx = 40.0 + (rng % 432) as f32; // Inset from edges
-            rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
-            let hy = 40.0 + (rng % 180) as f32; // Keep somewhat central vertically
-            
-            // Check overlap
-            let mut overlap = false;
-            for h in &self.houses {
-                let d = ((h.x - hx).powi(2) + (h.y - hy).powi(2)).sqrt();
-                if d < 60.0 { // Min distance
-                    overlap = true;
-                    break;
+        // Random Houses
+        self.generate_houses(house_count);
+        
+        // Level 2: Obstacles
+        self.obstacles = vec![];
+        if _level == 2 {
+            let mut rng = random::u32();
+            let mut attempts = 0;
+            while self.obstacles.len() < 8 && attempts < 100 {
+                attempts += 1;
+                rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                let ox = 60.0 + (rng % 392) as f32; 
+                rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                let oy = 60.0 + (rng % 168) as f32;
+                
+                // Avoid overlap with houses
+                let mut safe = true;
+                for h in &self.houses {
+                   if ((h.x - ox).powi(2) + (h.y - oy).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                }
+                
+                // Avoid overlap with existing obstacles
+                if safe {
+                    for o in &self.obstacles {
+                        if ((o.x - ox).powi(2) + (o.y - oy).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                    }
+                }
+                
+                if safe {
+                    self.obstacles.push(Obstacle { x: ox, y: oy, w: 24.0, h: 24.0, respawn_timer: 0 });
                 }
             }
-            
-            if !overlap {
-                self.houses.push(House {
-                    x: hx,
-                    y: hy,
-                    points: 5,
-                    cooldown: 0,
-                    last_collected_by: None,
-                    last_collection_time: 0,
-                });
-            }
         }
+        
+        // Level 2: Dynamic Shuffle Init
+        if _level == 2 {
+            self.shuffle_timer = 15 * 60; // 15 seconds
+        } else {
+            self.shuffle_timer = 0;
+        }
+        self.is_shuffling = false;
+        self.shuffle_pause_timer = 0;
 
         // Generate Decor (Trees and Piles)
         self.decors = vec![];
@@ -216,7 +241,7 @@ impl MultiplayerGame {
         self.floating_texts = vec![];
         
         // Timer reset
-        self.timer = 180;
+        self.timer = self.max_time_minutes * 60;
         self.game_over = false;
     }
 
@@ -224,7 +249,7 @@ impl MultiplayerGame {
         if self.game_over {
             // Wait for input to restart
             if gamepad::get(0).start.just_pressed() || gamepad::get(0).a.just_pressed() {
-                 self.init_level(1);
+                 self.init_level(self.current_level);
             }
             return;
         }
@@ -237,13 +262,16 @@ impl MultiplayerGame {
             self.end_game();
         }
 
-        // Spawn Powerups (6s Cycle)
-        // 0s (360 frames): Gift Point (0)
-        // 3s (180 frames): Speed Boost (1)
-        let phase = self.frame_count % 360;
-        let kind_to_spawn = if phase == 0 { Some(0) } else if phase == 180 { Some(1) } else { None };
+        // Spawn Powerups
+        let mut kinds_to_spawn = vec![];
+        
+        // Gift (0): Every 6s (360 frames)
+        if self.frame_count % 360 == 0 { kinds_to_spawn.push(0); }
+        
+        // Speed (1): Every 10s (600 frames)
+        if self.frame_count % 600 == 0 { kinds_to_spawn.push(1); }
 
-        if let Some(kind) = kind_to_spawn {
+        for kind in kinds_to_spawn {
              // Check if already exists
              let exists = self.powerups.iter().any(|p| p.kind == kind);
              
@@ -294,56 +322,39 @@ impl MultiplayerGame {
         }
 
         // Players Update
-        for i in 0..self.players.len() {
-            let (dx, dy) = self.get_input(i, self.players[i].id);
-            let speed = if self.players[i].boost_timer > 0 { 3.0 } else { 2.0 };
-            
-            if self.players[i].boost_timer > 0 {
-                self.players[i].boost_timer -= 1;
+        // Freeze movement if shuffling (Level 2 pause)
+        if !self.is_shuffling {
+            for i in 0..self.players.len() {
+                let (dx, dy) = self.get_input(i, self.players[i].id);
+                let speed = if self.players[i].boost_timer > 0 { 3.0 } else { 2.0 };
+                
+                if self.players[i].boost_timer > 0 {
+                    self.players[i].boost_timer -= 1;
+                }
+                if self.players[i].invuln_timer > 0 {
+                    self.players[i].invuln_timer -= 1;
+                }
+
+                self.players[i].x += dx * speed;
+                self.players[i].y += dy * speed;
+
+                // Bounds
+                let r = self.players[i].radius;
+                self.players[i].x = self.players[i].x.clamp(r, 512.0 - r);
+                self.players[i].y = self.players[i].y.clamp(r, 288.0 - r);
             }
-
-            self.players[i].x += dx * speed;
-            self.players[i].y += dy * speed;
-
-            // Bounds
-            let r = self.players[i].radius;
-            self.players[i].x = self.players[i].x.clamp(r, 512.0 - r);
-            self.players[i].y = self.players[i].y.clamp(r, 288.0 - r);
+        } else {
+             // Still notify invuln timer tick if frozen? Usually yes.
+             for p in self.players.iter_mut() {
+                 if p.invuln_timer > 0 { p.invuln_timer -= 1; }
+             }
         }
 
         // House Interaction
         let mut sparkle_reqs = vec![]; // Defer spawning
         let current_tick = self.frame_count;
-        for house in self.houses.iter_mut() {
-            if house.cooldown > 0 {
-                house.cooldown -= 1;
-            } else {
-                 // Charging Mechanic: Increase points every 2s (120 ticks)
-                 if self.frame_count % 120 == 0 && house.points < 50 {
-                     house.points += 5;
-                 }
-            }
-            
-            for player in self.players.iter_mut() {
-                let dist = ((player.x - house.x).powi(2) + (player.y - house.y).powi(2)).sqrt();
-                if dist < (player.radius + 12.0) {
-                    // Collection logic
-                    if house.cooldown == 0 {
-                        player.score += house.points;
-                        
-                        // Spawn Popup
-                        // We can't push to self.floating_texts here due to borrow.
-                        // We need to defer or use interior mutability.
-                        // Since we are already deferring sparkles, let's defer texts too?
-                        // Or just calculate points here and queue an event.
-                        
-                        // Let's add text request to sparkle_reqs? No, type mismatch.
-                        // Just queue text data in a separate vec.
-                    } 
-                    // Steal logic loop (omitted for brevity, assume existing)
-                }
-            }
-        }
+        // House Interaction logic merged into the loop below to prevent double updates
+
         
         // Re-write interaction loop to handle defer properly
         // We need score pops.
@@ -452,8 +463,205 @@ impl MultiplayerGame {
         }
 
          self.powerups.retain(|p| !p.collected);
+         
+         // Level 2 Mechanics
+         if self.current_level == 2 {
+             self.update_level2();
+         }
     }
     
+    fn generate_houses(&mut self, count: usize) {
+        self.houses = vec![];
+        let mut rng = random::u32();
+        let mut attempts = 0;
+        
+        while self.houses.len() < count && attempts < 200 {
+            attempts += 1;
+            rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+            let hx = 40.0 + (rng % 432) as f32; // Inset from edges
+            rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+            let hy = 40.0 + (rng % 180) as f32; // Keep somewhat central vertically
+            
+            // Check overlap with existing houses
+            let mut overlap = false;
+            for h in &self.houses {
+                let d = ((h.x - hx).powi(2) + (h.y - hy).powi(2)).sqrt();
+                if d < 60.0 { 
+                    overlap = true;
+                    break;
+                }
+            }
+            
+            // Check overlap with obstacles (if they exist yet, though usually houses gen first)
+            if !overlap {
+                for o in &self.obstacles {
+                     let d = ((o.x - hx).powi(2) + (o.y - hy).powi(2)).sqrt();
+                     if d < 60.0 { overlap = true; break; }
+                }
+            }
+            
+            if !overlap {
+                self.houses.push(House {
+                    x: hx,
+                    y: hy,
+                    points: 5,
+                    cooldown: 0,
+                    last_collected_by: None,
+                    last_collection_time: 0,
+                });
+            }
+        }
+    }
+    
+    fn update_level2(&mut self) {
+        // Shuffle Logic
+        if self.is_shuffling {
+            if self.shuffle_pause_timer > 0 {
+                self.shuffle_pause_timer -= 1;
+            } else {
+                // Time to shuffle!
+                self.generate_houses(14);
+                self.is_shuffling = false;
+                self.shuffle_timer = 15 * 60;
+                
+                // Alert Text
+                self.floating_texts.push(FloatingText {
+                    x: 256.0,
+                    y: 144.0,
+                    text: "HOUSES MOVED!".to_string(),
+                    color: 0xFFFF00FF,
+                    life: 120,
+                });
+            }
+        } else {
+            if self.shuffle_timer > 0 {
+                self.shuffle_timer -= 1;
+                if self.shuffle_timer == 60 { // 1 sec warning
+                     self.floating_texts.push(FloatingText {
+                        x: 256.0,
+                        y: 144.0,
+                        text: "SHUFFLING SOON...".to_string(),
+                        color: 0xFFA500FF,
+                        life: 60,
+                    });
+                }
+            } else {
+                self.is_shuffling = true;
+                self.shuffle_pause_timer = 60; // 1 sec pause
+            }
+        }
+        
+        // Obstacle Collision & Respawn
+        let mut penalties = vec![];
+        let mut explosions = vec![];
+        
+        // Snapshot existing positions to check for overlaps during respawn
+        let obstacle_positions: Vec<(f32, f32)> = self.obstacles.iter().map(|o| (o.x, o.y)).collect();
+        
+        // Handle Respawning Obstacles
+        for (i, o) in self.obstacles.iter_mut().enumerate() {
+            if o.respawn_timer > 0 {
+                o.respawn_timer -= 1;
+                if o.respawn_timer == 0 {
+                     // Respawn Logic
+                     let mut rng = random::u32();
+                     let mut attempts = 0;
+                     let mut placed = false;
+                     while !placed && attempts < 50 {
+                         attempts += 1;
+                         rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                         let ox = 60.0 + (rng % 392) as f32; 
+                         rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                         let oy = 60.0 + (rng % 168) as f32;
+                         
+                         let mut safe = true;
+                         // Check houses
+                         for h in &self.houses {
+                            if ((h.x - ox).powi(2) + (h.y - oy).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                         }
+                         // Check players (don't spawn on top)
+                         if safe {
+                             for p in &self.players {
+                                 if ((p.x - ox).powi(2) + (p.y - oy).powi(2)).sqrt() < 60.0 { safe = false; break; }
+                             }
+                         }
+                         // Check other obstacles
+                         if safe {
+                             for (idx, (ex, ey)) in obstacle_positions.iter().enumerate() {
+                                 if i != idx { // Don't check against self (old pos)
+                                     if ((ex - ox).powi(2) + (ey - oy).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                                 }
+                             }
+                         }
+                         
+                         if safe {
+                             o.x = ox;
+                             o.y = oy;
+                             placed = true;
+                         }
+                     }
+                }
+                continue; // Don't collide if respawning
+            }
+            
+            // Collision Check
+            for p in self.players.iter_mut() {
+                if p.invuln_timer > 0 { continue; }
+
+                // Circle collision for Bomb (radius vs radius)
+                // Bomb radius approx w/2 = 12
+                let bomb_radius = 12.0;
+                let dx = p.x - (o.x + o.w/2.0);
+                let dy = p.y - (o.y + o.h/2.0);
+                let dist = (dx*dx + dy*dy).sqrt();
+
+                if dist < (p.radius + bomb_radius) {
+                    // Hit!
+                    if p.score >= 20 { p.score -= 20; } else { p.score = 0; }
+                    p.invuln_timer = 60; // 1s invuln
+                    
+                    penalties.push((p.x, p.y));
+                    explosions.push((o.x + o.w/2.0, o.y + o.h/2.0));
+                    
+                    // Trigger Respawn
+                    o.respawn_timer = 30; // 0.5s delay
+                    o.x = -1000.0; // Hide
+                }
+            }
+        }
+        
+        // Apply penalties (Sound & Text)
+        for (px, py) in penalties {
+            self.floating_texts.push(FloatingText {
+                x: px,
+                y: py - 20.0,
+                text: "-20".to_string(),
+                color: 0xFF0000FF, // Red
+                life: 60,
+            });
+        }
+        
+        // Apply Explosions
+        for (ex, ey) in explosions {
+             turbo::audio::play("projectile_hit"); 
+             self.spawn_explosion(ex, ey);
+        }
+    }
+
+    fn spawn_explosion(&mut self, x: f32, y: f32) {
+        for _ in 0..12 {
+            let angle = (random::u32() % 360) as f32 * 3.14 / 180.0;
+            let speed = (random::u32() % 30) as f32 / 10.0 + 2.0;
+            self.particles.push(MParticle {
+                x, y,
+                vx: angle.cos() * speed,
+                vy: angle.sin() * speed,
+                life: 20 + (random::u32() % 15),
+                color: 0xFF5722FF, // Orange/Red Boom
+            });
+        }
+    }
+
     fn spawn_sparkles(&mut self, x: f32, y: f32) {
         for _ in 0..8 {
             let angle = (random::u32() % 360) as f32 * 3.14 / 180.0;
@@ -819,6 +1027,43 @@ impl MultiplayerGame {
             
             // Label (Optional, maybe remove if too cluttered, or keep small)
             // text!(if is_santa{"P1"}else{"P2"}, x=x-6, y=ty-20, font="small", color=0xFFFFFFFF);
+        }
+        
+        // Level 2: Bomb Obstacles
+        for o in &self.obstacles {
+            if o.respawn_timer > 0 { continue; } // Hidden
+            
+            let x = o.x as i32;
+            let y = o.y as i32;
+            let w = o.w as i32;
+            
+            // Bomb Body (Black Circle)
+            // d=w+2 (26). Box is 24x24. Center is x+12, y+12.
+            // Top-left of circle should be x-1, y-1.
+            let bx = x - 1;
+            let by = y - 1;
+            
+            circ!(x=bx, y=by, d=w+2, color=0x212121FF); // Black body
+            
+            // Shine (Offset from top-left of circle)
+            circ!(x=bx+6, y=by+6, d=8, color=0x424242FF); // Grey highlight
+            
+            // Fuse Cap (Connects to top)
+            // Top of circle is 'by'. Center X is 'bx + 13' = 'x + 12'.
+            let cx = x + 12;
+            
+            rect!(x=cx-3, y=by-2, w=6, h=4, color=0x9E9E9EFF); // Cap overlaps top slightly
+            
+            // Fuse Line
+            rect!(x=cx-1, y=by-6, w=2, h=4, color=0x8D6E63FF);
+            
+            // Spark (Flickering)
+            if self.frame_count % 10 < 5 {
+                rect!(x=cx-2, y=by-9, w=4, h=4, color=0xFFC107FF); // Yellow
+                rect!(x=cx-1, y=by-8, w=2, h=2, color=0xFFFFFFFF); // White center
+            } else {
+                 rect!(x=cx-2, y=by-9, w=4, h=4, color=0xFF5722FF); // Orange
+            }
         }
 
         // HUD (Dark Text for Light BG)

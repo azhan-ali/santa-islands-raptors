@@ -8,6 +8,7 @@ pub use model::*;
 enum AppState {
     Menu,
     SinglePlayer,
+    MultiplayerLevelSelect,
     MultiplayerSetup,
     Multiplayer,
     Developer,
@@ -34,6 +35,7 @@ struct GameState {
     p1_name: String,
     p2_name: String,
     mp_duration: u32,
+    mp_level_selection: u32, // 1-5
     mp_setup_row: u8, // 0=P1, 1=P2, 2=Time, 3=Start
     mp_edit_cursor: usize,
     mp_is_editing: bool,
@@ -57,6 +59,7 @@ impl GameState {
             p1_name: "PLAYER 1".to_string(),
             p2_name: "PLAYER 2".to_string(),
             mp_duration: 3,
+            mp_level_selection: 1,
             mp_setup_row: 0,
             mp_edit_cursor: 0,
             mp_is_editing: false,
@@ -82,6 +85,7 @@ impl GameState {
             match self.state {
                 AppState::Menu => self.update_menu(),
                 AppState::SinglePlayer => self.update_single_player_menu(),
+                AppState::MultiplayerLevelSelect => self.update_multiplayer_level_select(),
                 AppState::MultiplayerSetup => self.update_multiplayer_setup(),
                 AppState::Multiplayer => self.update_multiplayer(),
                 AppState::Developer => self.update_developer(),
@@ -113,9 +117,8 @@ impl GameState {
             match self.menu_option {
                 MenuOption::SinglePlayer => self.state = AppState::SinglePlayer,
                 MenuOption::Multiplayer => {
-                    self.state = AppState::MultiplayerSetup;
-                    self.mp_setup_row = 0; // Reset cursor
-                    self.mp_is_editing = false;
+                    self.state = AppState::MultiplayerLevelSelect;
+                    self.mp_level_selection = 1;
                 },
                 MenuOption::Developer => self.state = AppState::Developer,
             }
@@ -153,7 +156,7 @@ impl GameState {
         // Initialize if not present (SHOULD NOT HAPPEN via Setup, but safe fallback)
         if self.multiplayer_game.is_none() {
             // Default fallback
-             self.multiplayer_game = Some(MultiplayerGame::new("Santa".to_string(), "Rival".to_string(), 3));
+             self.multiplayer_game = Some(MultiplayerGame::new("Santa".to_string(), "Rival".to_string(), 3, 1));
         }
 
         if let Some(game) = &mut self.multiplayer_game {
@@ -174,62 +177,79 @@ impl GameState {
         }
     }
     
+    fn update_multiplayer_level_select(&mut self) {
+        let gp = gamepad::get(0);
+        
+        let cols = 3; 
+
+        // Navigation (Left/Right)
+        if gp.left.just_pressed() {
+            if self.mp_level_selection > 1 { self.mp_level_selection -= 1; }
+        }
+        if gp.right.just_pressed() {
+            if self.mp_level_selection < 5 { self.mp_level_selection += 1; }
+        }
+        
+        // Navigation (Up/Down)
+        if gp.up.just_pressed() {
+             if self.mp_level_selection > cols { self.mp_level_selection -= cols; }
+        }
+        if gp.down.just_pressed() {
+             if self.mp_level_selection + cols <= 5 { self.mp_level_selection += cols; }
+        }
+        
+        // Select -> Go to Setup
+        if gp.start.just_pressed() || gp.a.just_pressed() {
+            self.state = AppState::MultiplayerSetup;
+            self.mp_setup_row = 0; // Reset to P1
+            self.mp_is_editing = false;
+            self.transition_timer = 10;
+        }
+        
+        // Back -> Menu
+        if gp.b.just_pressed() {
+            self.state = AppState::Menu;
+            self.transition_timer = 10;
+        }
+    }
+    
     fn update_multiplayer_setup(&mut self) {
         let gp = gamepad::get(0);
 
         if self.mp_is_editing {
             // EDIT MODE
+            // Row 0 = P1, Row 1 = P2
             let target_name = if self.mp_setup_row == 0 { &mut self.p1_name } else { &mut self.p2_name };
             
-            // Cursor Move
-            if gp.left.just_pressed() {
-                if self.mp_edit_cursor > 0 { self.mp_edit_cursor -= 1; }
-            }
-            if gp.right.just_pressed() {
-                if self.mp_edit_cursor < 9 { // Max length 10
-                    if self.mp_edit_cursor >= target_name.len() {
-                         target_name.push(' '); // Auto extend
-                    }
-                    self.mp_edit_cursor += 1;
-                }
+            // KEYBOARD INPUT
+            let kb = turbo::keyboard::get();
+            
+            // Text Input
+            for c in kb.chars() {
+                 // Only allow A-Z, 0-9, and space for simplicity/font support
+                 if (c.is_alphanumeric() || c == ' ') && target_name.len() < 10 {
+                     target_name.push(c.to_ascii_uppercase());
+                     self.mp_edit_cursor = target_name.len();
+                 }
             }
             
-            // Be sure string is long enough
-            while target_name.len() <= self.mp_edit_cursor {
-                target_name.push(' ');
-            }
-            target_name.truncate(10); // Hard limit
-
-            // Character Change
-            if gp.up.just_pressed() || gp.down.just_pressed() {
-                let mut chars: Vec<char> = target_name.chars().collect();
-                let mut c = chars[self.mp_edit_cursor];
-                // Cycle: Space -> A..Z -> Space
-                // ASCII: Space=32, A=65, Z=90
-                let delta = if gp.up.just_pressed() { 1 } else { -1 };
-                
-                let mut next_byte = c as i16 + delta;
-                if next_byte < 32 { next_byte = 90; } // Wrap to Z
-                else if next_byte > 90 { next_byte = 32; } // Wrap to Space
-                else if next_byte > 32 && next_byte < 65 { 
-                     // Skip non-alphas
-                     if delta > 0 { next_byte = 65; } else { next_byte = 32; }
-                }
-                
-                c = next_byte as u8 as char;
-                chars[self.mp_edit_cursor] = c;
-                *target_name = chars.into_iter().collect();
+            // Backspace
+            if kb.backspace().just_pressed() && target_name.len() > 0 {
+                target_name.pop();
+                self.mp_edit_cursor = target_name.len();
             }
             
-            // Stop Editing
-            if gp.b.just_pressed() || gp.start.just_pressed() || gp.a.just_pressed() {
+            // Stop Editing (Enter, Escape, or Gamepad A/B/Start)
+            if kb.enter().just_pressed() || kb.escape().just_pressed() || gp.a.just_pressed() || gp.b.just_pressed() || gp.start.just_pressed() {
                 self.mp_is_editing = false;
-                // Trim trailing spaces
                 *target_name = target_name.trim().to_string();
                 if target_name.is_empty() {
                     *target_name = if self.mp_setup_row == 0 { "PLAYER 1".to_string() } else { "PLAYER 2".to_string() };
                 }
             }
+            
+            // Ensure cursor is valid (just in case)
+            self.mp_edit_cursor = target_name.len();
             
         } else {
             // NAVIGATION MODE
@@ -242,6 +262,7 @@ impl GameState {
                 if self.mp_setup_row < 3 { self.mp_setup_row += 1; }
             }
             
+            // Row Interaction
             // Row Interaction
             match self.mp_setup_row {
                 0 | 1 => { // Names
@@ -258,7 +279,7 @@ impl GameState {
                     if gp.start.just_pressed() || gp.a.just_pressed() {
                          let p1 = self.p1_name.clone();
                          let p2 = self.p2_name.clone();
-                         self.multiplayer_game = Some(MultiplayerGame::new(p1, p2, self.mp_duration));
+                         self.multiplayer_game = Some(MultiplayerGame::new(p1, p2, self.mp_duration, self.mp_level_selection)); // Uses stored level
                          self.state = AppState::Multiplayer;
                          self.transition_timer = 10;
                     }
@@ -267,8 +288,9 @@ impl GameState {
             }
             
             // Back
+            // Back to Level Select
             if gp.b.just_pressed() {
-                self.state = AppState::Menu;
+                self.state = AppState::MultiplayerLevelSelect;
                 self.transition_timer = 10;
             }
         }
@@ -293,6 +315,7 @@ impl GameState {
         match self.state {
             AppState::Menu => self.draw_menu(),
             AppState::SinglePlayer => self.draw_single_player_menu(),
+            AppState::MultiplayerLevelSelect => self.draw_multiplayer_level_select(),
             AppState::MultiplayerSetup => self.draw_multiplayer_setup(),
             AppState::Multiplayer => {
                 if let Some(game) = &self.multiplayer_game {
@@ -305,6 +328,82 @@ impl GameState {
         }
     }
     
+    fn draw_multiplayer_level_select(&self) {
+        
+        let center_x = |text: &str, font_w: i32| -> i32 {
+             (512 - (text.len() as i32 * font_w)) / 2
+        };
+
+        text!("SELECT LEVEL", x = center_x("SELECT LEVEL", 8), y = 25, font = "large", color = 0xFFFF00FF);
+        
+        let start_y = 65;
+        let box_w = 80;
+        let box_h = 60;
+        let gap_x = 20;
+        let gap_y = 20;
+        
+        // Grid Calculation
+        let row1_count = 3;
+        let row2_count = 2;
+        
+        // Row 1 (Levels 1-3)
+        let row1_w = row1_count * box_w + (row1_count - 1) * gap_x;
+        let row1_start_x = (512 - row1_w) as i32 / 2;
+        
+        // Row 2 (Levels 4-5)
+        let row2_w = row2_count * box_w + (row2_count - 1) * gap_x;
+        let row2_start_x = (512 - row2_w) as i32 / 2;
+        
+        for i in 1..=5 {
+            let idx = (i - 1) as i32;
+            let row = if idx < 3 { 0 } else { 1 };
+            
+            let x = if row == 0 {
+                let col = idx;
+                row1_start_x + col * (box_w + gap_x)
+            } else {
+                let col = idx - 3;
+                row2_start_x + col * (box_w + gap_x)
+            };
+            
+            let y = start_y + row * (box_h + gap_y);
+            
+            let is_selected = self.mp_level_selection == i as u32;
+            let color = if is_selected { 0x00FF00FF } else { 0x444444FF };
+            let bg = if is_selected { 0x222222FF } else { 0x000000FF };
+            
+            // Box
+            rect!(x=x-2, y=y-2, w=(box_w+4) as u32, h=(box_h+4) as u32, color=color);
+            
+            // Procedural Background
+            // User requested black background for all
+            let bg_color = 0x000000FF; 
+            
+            rect!(x=x, y=y, w=box_w as u32, h=box_h as u32, color=bg_color);
+            
+            // Text
+            let num = format!("{}", i);
+            // Centering logic for the number inside the box
+            // box width 80. 'large' font is approx 8x16 or 16x16? Let's assume standard large is ~16px wide per char.
+            // 80 / 2 = 40. 16/2 = 8. -> x = x + 32.
+            text!(&num, x=x+32, y=y+20, font="large", color=0xFFFFFFFF);
+            
+            if is_selected {
+                text!("Level", x=x+20, y=y+45, font="small", color=0xAAAAAAFF);
+            }
+        }
+        
+        // Text Instructions (Below Grid)
+        let grid_bottom = start_y + 2 * box_h + gap_y; // 65 + 120 + 20 = 205
+        
+        text!("Press START to Continue", x=center_x("Press START to Continue", 8), y=grid_bottom + 15, font="medium", color=0xFFFFFFFF);
+        text!("Press X to Back", x=center_x("Press X to Back", 5), y=grid_bottom + 35, font="small", color=0xAAAAAAFF);
+
+        // Subtitle (Bottom)
+        let note = "(More exciting levels coming soon!)";
+        text!(note, x=center_x(note, 4), y=270, font="small", color=0xFFD700FF);
+    }
+    
     fn draw_multiplayer_setup(&self) {
         // Title
         text!("MULTIPLAYER SETUP", x = 180, y = 40, font = "large", color = 0xFFFF00FF);
@@ -314,16 +413,15 @@ impl GameState {
             (512 - (text.len() as i32 * font_w)) / 2
         };
 
-        let start_y = 90;
-        let gap = 50;
+        let start_y = 60;
+        let gap = 45;
         
         let editing = self.mp_is_editing;
         
-        // P1
+        // P1 (Row 0)
         let p1_col = if self.mp_setup_row == 0 { 0x00FF00FF } else { 0xAAAAAAFF };
         text!("Player 1 Name:", x = 100, y = start_y, font="medium", color = p1_col);
         
-        // Box P1
         let p1_box_col = if self.mp_setup_row == 0 && editing { 0xFFFF00FF } else { 0xFFFFFFFF };
         rect!(x=260, y=start_y-2, w=140, h=14, color=p1_box_col); 
         rect!(x=261, y=start_y-1, w=138, h=12, color=0x000000FF); 
@@ -334,19 +432,18 @@ impl GameState {
             let cx = 270 + (i as i32 * 10);
             let s = c.to_string();
             text!(&s, x=cx, y=start_y+1, font="medium", color=0xFFFFFFFF);
-            // Cursor
-            if self.mp_setup_row == 0 && editing && i == self.mp_edit_cursor {
-                 rect!(x=cx, y=start_y+11, w=8, h=2, color=0xFFFF00FF);
-            }
+        }
+        if self.mp_setup_row == 0 && editing {
+             let cx = 270 + (self.mp_edit_cursor as i32 * 10);
+             rect!(x=cx, y=start_y+11, w=8, h=2, color=0xFFFF00FF);
         }
         if self.mp_setup_row == 0 && !editing { text!("(Press SPACE to Edit)", x=410, y=start_y+2, font="small", color=0x666666FF); }
 
 
-        // P2
+        // P2 (Row 1)
         let p2_col = if self.mp_setup_row == 1 { 0x00FF00FF } else { 0xAAAAAAFF };
         text!("Player 2 Name:", x = 100, y = start_y + gap, font="medium", color = p2_col);
         
-        // Box P2
         let p2_box_col = if self.mp_setup_row == 1 && editing { 0xFFFF00FF } else { 0xFFFFFFFF };
         rect!(x=260, y=start_y+gap-2, w=140, h=14, color=p2_box_col);
         rect!(x=261, y=start_y+gap-1, w=138, h=12, color=0x000000FF);
@@ -356,20 +453,20 @@ impl GameState {
             let cx = 270 + (i as i32 * 10);
             let s = c.to_string();
             text!(&s, x=cx, y=start_y+gap+1, font="medium", color=0xFFFFFFFF);
-            // Cursor
-            if self.mp_setup_row == 1 && editing && i == self.mp_edit_cursor {
-                 rect!(x=cx, y=start_y+gap+11, w=8, h=2, color=0xFFFF00FF);
-            }
+        }
+        if self.mp_setup_row == 1 && editing {
+             let cx = 270 + (self.mp_edit_cursor as i32 * 10);
+             rect!(x=cx, y=start_y+gap+11, w=8, h=2, color=0xFFFF00FF);
         }
         if self.mp_setup_row == 1 && !editing { text!("(Press SPACE to Edit)", x=410, y=start_y+gap+2, font="small", color=0x666666FF); }
 
-        // Time
+        // Time (Row 2)
         let time_col = if self.mp_setup_row == 2 { 0x00FF00FF } else { 0xAAAAAAFF };
         text!("Duration:", x = 100, y = start_y + gap*2, font="medium", color = time_col);
         let time_val = format!(" < {} mins > ", self.mp_duration);
         text!(&time_val, x=270, y=start_y+gap*2, font="medium", color=if self.mp_setup_row == 2 { 0xFFFFFFFF } else { 0x888888FF });
 
-        // Start
+        // Start (Row 3)
         let btn_y = 230;
         let btn_w = 120;
         let btn_x = (512 - btn_w) / 2;
