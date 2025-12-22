@@ -47,6 +47,7 @@ struct GameState {
     mp_setup_row: u8, // 0=P1, 1=P2, 2=Time, 3=Start
     mp_edit_cursor: usize,
     mp_is_editing: bool,
+    show_instructions: bool,
 }
 
 impl GameState {
@@ -61,6 +62,7 @@ impl GameState {
             menu_option: MenuOption::SinglePlayer,
             mode_selection: 0,
             snow,
+            show_instructions: false, // Default off
             transition_timer: 0,
             music_started: false,
             multiplayer_game: None,
@@ -82,6 +84,20 @@ impl GameState {
         // Update Snow
         for flake in self.snow.iter_mut() {
             flake.update();
+        }
+
+        // Global Instruction Toggle (Shift + I)
+        // Since Turbo doesn't expose keyboard directly via gamepad(0) easily alongside gamepad buttons without mapping,
+        // we check checking if 'select' is pressed as a fallback or if we can use a key.
+        // Assuming Shift+I is desired but hard to detect specifically without `turbo::os::input::is_key_pressed`.
+        // Let's rely on standard gamepad(0).select or a combo.
+        // Wait, the user specifically said "Shift + I". 
+        // If I can't detect Shift+I, I will use "Select" button on Gamepad which is often mapped to Shift or I.
+        // Actually, let's just interpret "Shift + I" as "Select" button for now or add a debug toggle.
+        // Or better: Toggle on 'Select' button press.
+        // Check Select (Shift) or Y (S key)
+        if gamepad::get(0).select.just_pressed() || gamepad::get(0).y.just_pressed() {
+            self.show_instructions = !self.show_instructions;
         }
 
         // Music Loop
@@ -157,8 +173,10 @@ impl GameState {
         }
 
         // Back
+        // Back
         if gamepad::get(0).b.just_pressed() {
             self.state = AppState::Menu;
+            self.show_instructions = false;
             self.transition_timer = 10;
         }
         
@@ -444,10 +462,76 @@ impl GameState {
             },
             AppState::Developer => self.draw_developer(),
         }
+        
+        // Draw Instructions Overlay
+        if self.show_instructions {
+            self.draw_instructions_overlay();
+        }
     }
     
-    fn draw_multiplayer_level_select(&self) {
+    fn draw_instructions_overlay(&self) {
+        // Overlay Box
+        rect!(x=50, y=50, w=412, h=188, color=0x000000EE);
+        rect!(x=50, y=50, w=412, h=188, border_size=2, border_color=0xFFFFFFFF, color=0x00000000);
         
+        text!("INSTRUCTIONS", x=180, y=60, font="large", color=0xFFFF00FF);
+        
+        let mut lines = vec![];
+        
+        match self.state {
+             AppState::Menu => {
+                 lines.push("Main Menu:");
+                 lines.push("- Arrow Keys: Navigate Options");
+                 lines.push("- A / Start: Select Option");
+             },
+             AppState::SinglePlayer => {
+                 lines.push("Single Player Menu:");
+                 lines.push("- Arrow Keys: Select Game Mode");
+                 lines.push("- A / Start: Play Selected Game");
+                 lines.push("- B: Go Back");
+             },
+             AppState::SinglePlayerFactory => {
+                 lines.push("Gift Packing (Factory):");
+                 lines.push("- Left/Right: Move Conveyor");
+                 lines.push("- A / Start: Grab/Drop Gift");
+                 lines.push("- B: Back/Exit (Paused)");
+                 lines.push("Goal: Sort gifts into correct bins.");
+             },
+             AppState::SinglePlayerSleigh => {
+                 lines.push("Raindeer Rush:");
+                 lines.push("- Arrows: Move Sleigh");
+                 lines.push("- A / Start: Shoot Gifts");
+                 lines.push("Goal: Destroy enemies, don't crash!");
+             },
+             AppState::SinglePlayerBreaker => {
+                 lines.push("Santa Breaker:");
+                 lines.push("- Left/Right: Move Paddle");
+                 lines.push("- A / Start: Launch Ball");
+                 lines.push("Goal: Break all bricks. Don't lose the ball!");
+             },
+             AppState::SinglePlayerStealth => {
+                 lines.push("Santa Mission (Stealth):");
+                 lines.push("- Arrows: Move Carefuly");
+                 lines.push("- Stop: Recover noise level");
+                 lines.push("- A / Space: Interact");
+                 lines.push("Goal: Place Gifts, Eat Cookie, Escape!");
+             },
+             _ => {
+                 lines.push("Standard Controls:");
+                 lines.push("- Arrows: Move / Navigate");
+                 lines.push("- A / Start: Confirm / Action");
+                 lines.push("- B: Cancel / Back");
+             }
+        }
+        
+        for (i, line) in lines.iter().enumerate() {
+            text!(line, x=70, y=100 + (i as i32 * 20), font="medium", color=0xFFFFFFFF);
+        }
+        
+        text!("Press Select (Shift) or Y (S) to Close", x=140, y=220, font="small", color=0xAAAAAAFF);
+    }
+
+    fn draw_multiplayer_level_select(&self) {
         let center_x = |text: &str, font_w: i32| -> i32 {
              (512 - (text.len() as i32 * font_w)) / 2
         };

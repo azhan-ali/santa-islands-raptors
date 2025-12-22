@@ -354,24 +354,180 @@ impl StealthGame {
         for d in &self.dogs {
             let dx = d.x as i32 - cx;
             let dy = d.y as i32 - cy;
-            // Icon
-            let icon = if d.id == 2 { "WOLF" } else { "DOG" };
-            text!(icon, x=dx, y=dy, font="medium", color=0xFFFFFFFF);
+            // Facing? (If patrol, use dir. Else default left/right)
+            let face_right = if d.is_patrol { d.patrol_dir > 0.0 } else { true };
+            
+            // Animation for dogs
+            let anim = (self.time_elapsed * 5.0) as u32 % 2; // 0 or 1
+            
+            // Draw Dog/Wolf
+            if d.id == 2 {
+                // -- WOLF (Gray/Dark) --
+                let col = 0x616161FF; 
+                let eye_col = 0xFF0000FF; // Red eyes
+                
+                // Body
+                rect!(x=dx-12, y=dy-6, w=24, h=12, color=col);
+                // Legs (Animated)
+                if anim == 0 {
+                    rect!(x=dx-10, y=dy+6, w=4, h=8, color=col); // Back L
+                    rect!(x=dx+6, y=dy+6, w=4, h=8, color=col);  // Front L
+                } else {
+                    rect!(x=dx-8, y=dy+6, w=4, h=8, color=col); 
+                    rect!(x=dx+8, y=dy+6, w=4, h=8, color=col);
+                }
+                
+                // Tail
+                let tx = if face_right { dx-14 } else { dx+12 };
+                rect!(x=tx, y=dy-4, w=4, h=6, color=col);
+
+                // Head
+                if face_right {
+                    rect!(x=dx+12, y=dy-10, w=10, h=10, color=col); // Head
+                    rect!(x=dx+18, y=dy-6, w=6, h=6, color=col);   // Snout
+                    rect!(x=dx+16, y=dy-8, w=2, h=2, color=eye_col); // Eye
+                    rect!(x=dx+14, y=dy-14, w=4, h=4, color=col);  // Ear
+                } else {
+                    rect!(x=dx-22, y=dy-10, w=10, h=10, color=col); // Head
+                    rect!(x=dx-26, y=dy-6, w=6, h=6, color=col);   // Snout
+                    rect!(x=dx-18, y=dy-8, w=2, h=2, color=eye_col); // Eye
+                    rect!(x=dx-18, y=dy-14, w=4, h=4, color=col);  // Ear
+                }
+
+            } else {
+                // -- DOG (Brown/Beige) --
+                let col = 0x8D6E63FF;     // Brown
+                let spot_col = 0x5D4037FF; // Dark Brown spots
+                
+                // Sleeping Pose (Lying down)
+                rect!(x=dx-14, y=dy, w=28, h=12, color=col); // Main Body
+                // Spot on body
+                rect!(x=dx-6, y=dy+2, w=6, h=6, color=spot_col);
+                
+                // Legs tucked in
+                rect!(x=dx-10, y=dy+12, w=8, h=3, color=col);
+                rect!(x=dx+4, y=dy+12, w=8, h=3, color=col);
+                
+                // Head resting (Front)
+                rect!(x=dx+10, y=dy-4, w=12, h=10, color=col); 
+                // Ears (Floppy)
+                rect!(x=dx+10, y=dy-2, w=4, h=6, color=spot_col);
+                rect!(x=dx+18, y=dy-2, w=4, h=6, color=spot_col);
+                // Nose
+                rect!(x=dx+14, y=dy+4, w=4, h=3, color=0x212121FF);
+                // Closed Eyes
+                rect!(x=dx+12, y=dy, w=3, h=1, color=0x3E2723FF);
+                rect!(x=dx+17, y=dy, w=3, h=1, color=0x3E2723FF);
+                
+                // Zzz floating
+                if (self.time_elapsed * 2.0) as i32 % 2 == 0 {
+                    text!("z", x=dx, y=dy-20, font="small", color=0xFFFFFF88);
+                }
+            }
             
             // Bar above dog
             let bar_w = 40;
             let fill = (d.alert / 100.0 * 40.0) as u32;
-            rect!(x=dx-20, y=dy-20, w=bar_w, h=5, color=0x555555FF);
+            rect!(x=dx-20, y=dy-30, w=bar_w, h=5, color=0x555555FF);
             let col = if d.alert > 80.0 { 0xE74C3CFF } else { 0x2ECC71FF };
-            rect!(x=dx-20, y=dy-20, w=fill, h=5, color=col);
+            rect!(x=dx-20, y=dy-30, w=fill, h=5, color=col);
         }
 
-        // Player
+        // Draw Player (Santa) - High Detail Stealth Version
         let px = self.player_x as i32 - cx;
         let py = self.player_y as i32 - cy;
-        circ!(x=px-10, y=py-10, d=20, color=0xC0392BFF); 
-        circ!(x=px-8, y=py-8, d=16, color=0xFFFFFFFF);
         
+        // let direction = 1; // Unused
+        
+        // -- ANIMATION --
+        let walk_cycle = (self.time_elapsed * 10.0) as u32 % 4; // 0, 1, 2, 3
+        let bob_y = if walk_cycle % 2 == 0 { 1 } else { 0 };
+
+        // -- BODY --
+        rect!(x=px-5, y=py-8+bob_y, w=10, h=14, color=0xD32F2FFF); 
+        rect!(x=px-5, y=py+2+bob_y, w=10, h=2, color=0x212121FF); 
+        rect!(x=px-2, y=py+2+bob_y, w=4, h=2, color=0xF1C40FFF); // Buckle
+        rect!(x=px-6, y=py+6+bob_y, w=12, h=2, color=0xFFFFFFFF);
+        rect!(x=px-1, y=py-8+bob_y, w=2, h=14, color=0xFFFFFFFF);
+
+        // -- LEGS / BOOTS --
+        rect!(x=px-4, y=py+8+bob_y, w=4, h=4, color=0xD32F2FFF); 
+        rect!(x=px-4, y=py+12+bob_y, w=4, h=3, color=0x212121FF); 
+        rect!(x=px+2, y=py+8+bob_y, w=4, h=4, color=0xD32F2FFF); 
+        rect!(x=px+2, y=py+12+bob_y, w=4, h=3, color=0x212121FF); 
+
+        // -- HEAD --
+        let hy = py - 18 + bob_y;
+        rect!(x=px-4, y=hy, w=8, h=8, color=0xFFCC80FF); 
+        rect!(x=px-5, y=hy+4, w=10, h=6, color=0xFFFFFFFF);
+        rect!(x=px-2, y=hy+9, w=4, h=2, color=0xFFFFFFFF); 
+        
+        rect!(x=px-2, y=hy+2, w=1, h=1, color=0x000000FF);
+        rect!(x=px+2, y=hy+2, w=1, h=1, color=0x000000FF);
+        
+        rect!(x=px-5, y=hy-4, w=10, h=4, color=0xD32F2FFF); 
+        rect!(x=px-4, y=hy-7, w=6, h=3, color=0xD32F2FFF); 
+        rect!(x=px+1, y=hy-9, w=4, h=3, color=0xD32F2FFF); 
+        rect!(x=px+5, y=hy-8, w=3, h=3, color=0xFFFFFFFF); 
+        
+        // -- SACK --
+        rect!(x=px-9, y=py-8+bob_y, w=6, h=12, color=0x795548FF); 
+        rect!(x=px-7, y=py-10+bob_y, w=4, h=2, color=0x8D6E63FF); 
+        
+        // -- ARMS --
+        rect!(x=px-6, y=py-6+bob_y, w=3, h=6, color=0xD32F2FFF);
+        rect!(x=px-6, y=py+bob_y, w=3, h=3, color=0xFFCC80FF); 
+        rect!(x=px+4, y=py-6+bob_y, w=3, h=6, color=0xD32F2FFF);
+        rect!(x=px+4, y=py+bob_y, w=3, h=3, color=0xFFCC80FF);
+
+        // -- FURNITURE & DECOR --
+        
+        // 1. Christmas Tree (At Gift 3 Location: 800, 800)
+        let tx = 800 - cx;
+        let ty = 800 - cy;
+        // Trunk
+        rect!(x=tx-4, y=ty+20, w=8, h=10, color=0x5D4037FF);
+        // Leaves (Layers)
+        rect!(x=tx-20, y=ty+5, w=40, h=15, color=0x2E7D32FF); // Bottom
+        rect!(x=tx-15, y=ty-5, w=30, h=15, color=0x388E3CFF); // Mid
+        rect!(x=tx-10, y=ty-15, w=20, h=15, color=0x4CAF50FF); // Top
+        // Ornaments (Blinking?)
+        let blink = (self.time_elapsed * 5.0) as u32 % 2 == 0;
+        if blink {
+             rect!(x=tx-8, y=ty, w=3, h=3, color=0xF1C40FFF);
+             rect!(x=tx+5, y=ty+8, w=3, h=3, color=0xE91E63FF);
+             rect!(x=tx, y=ty-10, w=3, h=3, color=0x03A9F4FF);
+        }
+        // Star on Top
+        rect!(x=tx-3, y=ty-20, w=6, h=6, color=0xFFD700FF);
+        
+        // 2. Kitchen Table (Near Cookie: 100, 750)
+        let kx = 100 - cx;
+        let ky = 750 - cy;
+        // Table Top
+        rect!(x=kx-30, y=ky, w=60, h=30, color=0x8D6E63FF); // Brown
+        rect!(x=kx-25, y=ky+5, w=50, h=20, color=0xA1887FFF); // Light Brown inlay
+        // Legs
+        rect!(x=kx-25, y=ky+30, w=5, h=15, color=0x5D4037FF);
+        rect!(x=kx+20, y=ky+30, w=5, h=15, color=0x5D4037FF);
+        
+        // Cookie Plate
+        circ!(x=kx, y=ky+15, d=10, color=0xFFFFFFFF); // Plate
+        if !self.cookie_done {
+            circ!(x=kx+1, y=ky+16, d=6, color=0xD35400FF); // Cookie
+            rect!(x=kx+2, y=ky+17, w=1, h=1, color=0x3E2723FF); // Chip
+            rect!(x=kx+4, y=ky+16, w=1, h=1, color=0x3E2723FF); // Chip
+        }
+
+        // 3. Simple Bed (Master Bed: 175, 120 approx)
+        let bx = 150 - cx;
+        let by_pos = 100 - cy;
+        rect!(x=bx, y=by_pos, w=80, h=100, color=0x3F51B5FF); // Blanket
+        rect!(x=bx, y=by_pos, w=80, h=30, color=0xFFFFFFFF); // Pillow area
+        rect!(x=bx+10, y=by_pos+5, w=25, h=20, color=0xEEEEEEFF); // Pillow 1
+        rect!(x=bx+45, y=by_pos+5, w=25, h=20, color=0xEEEEEEFF); // Pillow 2
+
+
         // Waves
         for w in &self.waves {
             let wx = w.x as i32 - cx;

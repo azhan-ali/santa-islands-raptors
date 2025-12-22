@@ -172,8 +172,8 @@ impl SleighGame {
              self.enemies.push(SleighEnemy {
                  x: 520.0,
                  y: ey,
-                 w: 30.0,
-                 h: 30.0,
+                 w: 40.0,
+                 h: 40.0,
                  speed: base_s + ((rand() % 20) as f32 / 10.0),
                  hp,
                  max_hp: hp,
@@ -268,30 +268,85 @@ impl SleighGame {
         let px = self.player_x as i32;
         let py = self.player_y as i32;
 
-        // Reindeer (Right side of player rect)
-        // Rect: x, y, w=60, h=30
-        // Sleigh on left (0-30), Reindeer on right (30-60)
-        
-        // Body
-        rect!(x=px+35, y=py+12, w=20, h=10, color=0x8D6E63FF);
-        // Neck/Head
-        rect!(x=px+50, y=py+5, w=8, h=12, color=0x8D6E63FF);
-        rect!(x=px+52, y=py+2, w=8, h=6, color=0x8D6E63FF);
-        // Nose (Red pixel)
-        rect!(x=px+60, y=py+4, w=2, h=2, color=0xFF0000FF);
+        // Player (Santa + Sleigh + Reindeer) - Pixel Art
+        // Animation Frame (0 or 1)
+        let anim = (self.frame_count / 10) % 2; 
 
-        // Sleigh
-        rect!(x=px, y=py+12, w=30, h=12, color=0xC0392BFF);
-        // Gold Runner
-        rect!(x=px, y=py+22, w=35, h=2, color=0xF1C40FFF);
+        // -- Reindeer (Leading the sleigh) --
+        // Position relative to player_x/y
+        let rx = px + 40;
+        let ry = py + 5;
+
+        // Reindeer Legs (Animated)
+        let leg_color = 0x6D4C41FF;
+        if anim == 0 {
+            rect!(x=rx+5,  y=ry+15, w=3, h=10, color=leg_color); // Front Left
+            rect!(x=rx+15, y=ry+15, w=3, h=10, color=leg_color); // Back Left
+        } else {
+            rect!(x=rx+2,  y=ry+14, w=3, h=8, color=leg_color);  // Front Left (Raised)
+            rect!(x=rx+18, y=ry+14, w=3, h=8, color=leg_color);  // Back Left (Raised)
+        }
+
+        // Reindeer Body
+        rect!(x=rx, y=ry+5, w=25, h=12, color=0x8D6E63FF); // Main body
+        rect!(x=rx-2, y=ry+4, w=4, h=6, color=0xFFFFFFFF); // Tail
+
+        // Reindeer Head & Neck
+        rect!(x=rx+20, y=ry-2, w=8, h=10, color=0x8D6E63FF); // Neck
+        rect!(x=rx+22, y=ry-6, w=10, h=9, color=0x8D6E63FF); // Head
         
-        // Santa
+        // Antlers
+        rect!(x=rx+26, y=ry-10, w=2, h=4, color=0xD7CCC8FF);
+        rect!(x=rx+28, y=ry-9, w=4, h=2, color=0xD7CCC8FF);
+
+        // Nose (Rudolph Red!)
+        rect!(x=rx+32, y=ry-2, w=3, h=3, color=0xFF0000FF);
+
+        // Reins (Connecting to sleigh)
+        rect!(x=px+30, y=ry+6, w=15, h=1, color=0xF1C40FFF);
+
+
+        // -- Sleigh --
+        let sx = px;
+        let sy = py + 10;
+
+        // Runners (Gold)
+        rect!(x=sx, y=sy+15, w=40, h=2, color=0xF1C40FFF); // Bottom runner
+        rect!(x=sx, y=sy+10, w=2, h=5, color=0xF1C40FFF);  // Support Back
+        rect!(x=sx+30, y=sy+10, w=2, h=5, color=0xF1C40FFF); // Support Front
+        rect!(x=sx+38, y=sy+10, w=2, h=5, color=0xF1C40FFF); // Curved tip support
+
+        // Sleigh Body (Red)
+        rect!(x=sx, y=sy, w=35, h=12, color=0xB71C1CFF); 
+        rect!(x=sx-2, y=sy, w=2, h=14, color=0xD32F2FFF); // Back rest
+        rect!(x=sx+35, y=sy+5, w=3, h=7, color=0xD32F2FFF); // Front curve
+        
+        // Ornament / Trim
+        rect!(x=sx, y=sy+4, w=35, h=2, color=0xFFD700FF);
+
+
+        // -- Santa --
+        let santa_x = sx + 10;
+        let santa_y = sy - 8;
+
+        // Body
+        rect!(x=santa_x, y=santa_y+5, w=14, h=10, color=0xD32F2FFF); // Red Coat
+        rect!(x=santa_x+4, y=santa_y+5, w=6, h=10, color=0xFFFFFFFF); // White Fur center/beard flow
+
         // Head
-        rect!(x=px+10, y=py+2, w=10, h=10, color=0xFFCCBCFF); 
+        rect!(x=santa_x+2, y=santa_y, w=10, h=8, color=0xFFCCBCFF); // Face
+        rect!(x=santa_x+2, y=santa_y+5, w=10, h=4, color=0xFFFFFFFF); // Beard
+        
         // Hat
-        rect!(x=px+8, y=py-2, w=14, h=4, color=0xD32F2FFF);
-        // Beard
-        rect!(x=px+10, y=py+8, w=10, h=6, color=0xFFFFFFFF);
+        rect!(x=santa_x, y=santa_y-4, w=14, h=4, color=0xD32F2FFF); // Hat Red
+        rect!(x=santa_x+12, y=santa_y-2, w=4, h=4, color=0xFFFFFFFF); // Pom Pom
+
+        // -- Sack of Gifts --
+        let sack_x = sx + 2;
+        let sack_y = sy - 5;
+        rect!(x=sack_x, y=sack_y, w=8, h=10, color=0x795548FF); // Brown Sack
+        rect!(x=sack_x+1, y=sack_y-2, w=6, h=2, color=0xA1887FFF); // Top tied
+
 
         // Bullets
         for b in &self.bullets {
@@ -313,8 +368,10 @@ impl SleighGame {
             // Health Number
             let val = e.hp;
             let txt = format!("{}", val);
-            // Center text simple calc
-            text!(&txt, x=ex + 10, y=ey + 8, font="small", color=0x000000FF);
+            // Large font (approx 16px wide). Box 40 wide.
+            // Center: (40 - 16)/2 = 12.
+            let offset = if val > 9 { 4 } else { 12 }; 
+            text!(&txt, x=ex + offset, y=ey + 10, font="large", color=0x000000FF);
         }
 
         // Particles

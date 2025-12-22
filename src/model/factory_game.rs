@@ -285,23 +285,54 @@ impl FactoryGame {
             rect!(x=g.x as i32, y=g.y as i32 + 10, w=g.w as u32, h=4, color=0xFFFFFF80);
         }
 
-        // Player (Santa) - Simple
+        // Player (Santa) - Detailed
         let px = self.player_x as i32;
         let py = self.player_y as i32;
-        // Body (Red)
-        rect!(x=px-10, y=py-10, w=20, h=25, color=0xD32F2FFF);
-        // Head (Peach)
-        rect!(x=px-8, y=py-18, w=16, h=10, color=0xFFCC80FF);
-        // Hat
-        rect!(x=px-8, y=py-22, w=16, h=6, color=0xD32F2FFF);
-        // Beard
-        rect!(x=px-8, y=py-12, w=16, h=6, color=0xFFFFFFFF);
         
-        // Held Gift
+        // let direction = 1; // Removed unused variable 
+        // For Factory, he moves left/right/up/down. Let's make him face "front" or slightly side.
+        // Let's use Front Facing similar to Multiplayer design but simpler.
+        
+        // Body (Red Coat)
+        rect!(x=px-6, y=py, w=12, h=14, color=0xD32F2FFF); 
+        // White Fur (Center)
+        rect!(x=px-2, y=py, w=4, h=14, color=0xFFFFFFFF);
+        // Belt
+        rect!(x=px-6, y=py+8, w=12, h=2, color=0x000000FF);
+        rect!(x=px-2, y=py+8, w=4, h=2, color=0xF1C40FFF); // Buckle
+        
+        // Head
+        rect!(x=px-5, y=py-10, w=10, h=10, color=0xFFCCBCFF); 
+        // Beard
+        rect!(x=px-5, y=py-4, w=10, h=6, color=0xFFFFFFFF);
+        
+        // Hat
+        rect!(x=px-6, y=py-13, w=12, h=4, color=0xD32F2FFF); 
+        rect!(x=px+4, y=py-12, w=4, h=4, color=0xFFFFFFFF); // Pom
+        
+        // Arms (Holding Gift?)
         if self.held_gift_type != 0 {
-            rect!(x=px-8, y=py+5, w=16, h=16, color=self.held_gift_color);
-            rect!(x=px-2, y=py+5, w=4, h=16, color=0xFFFFFF80);
+             // Arms up holding
+             rect!(x=px-9, y=py+2, w=3, h=8, color=0xD32F2FFF);
+             rect!(x=px+6, y=py+2, w=3, h=8, color=0xD32F2FFF);
+             
+             // The Held Gift (Above Head)
+             rect!(x=px-8, y=py-22, w=16, h=16, color=self.held_gift_color);
+             rect!(x=px-2, y=py-22, w=4, h=16, color=0xFFFFFF80); // Ribbon V
+             rect!(x=px-8, y=py-16, w=16, h=4, color=0xFFFFFF80); // Ribbon H
+             
+        } else {
+             // Arms Down
+             rect!(x=px-9, y=py+4, w=3, h=8, color=0xD32F2FFF);
+             rect!(x=px+6, y=py+4, w=3, h=8, color=0xD32F2FFF);
+             // Hands
+             rect!(x=px-9, y=py+12, w=3, h=3, color=0xFFCCBCFF);
+             rect!(x=px+6, y=py+12, w=3, h=3, color=0xFFCCBCFF);
         }
+        
+        // Boots
+        rect!(x=px-6, y=py+14, w=4, h=4, color=0x000000FF);
+        rect!(x=px+2, y=py+14, w=4, h=4, color=0x000000FF);
 
         // Particles
         for p in &self.particles {

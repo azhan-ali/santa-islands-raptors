@@ -321,11 +321,29 @@ impl BreakerGame {
         rect!(x=self.paddle.x as i32, y=self.paddle.y as i32, w=self.paddle.w as u32, h=self.paddle.h as u32, color=0xC0392BFF);
         rect!(x=self.paddle.x as i32, y=self.paddle.y as i32 + 2, w=self.paddle.w as u32, h=2, color=0xF1C40FFF);
 
-        // Ball
+        // Ball (Santa Face)
         let bx = self.ball.x as i32;
         let by = self.ball.y as i32;
-        let br = self.ball.r as i32;
-        circ!(x=bx - br, y=by - br, d=(br*2) as u32, color=0xECF0F1FF); // White
+        // let br = self.ball.r as i32; // Unused
+        
+        // Ensure size is big enough for face. Radius 5 is diameter 10.
+        // Let's draw a slightly larger sprite centered at bx, by.
+        // Original logic checks collision with r=5. 
+        // We will draw a 12x12 sprite centered.
+        
+        let sx = bx - 6;
+        let sy = by - 6;
+        
+        // Head
+        rect!(x=sx+2, y=sy+4, w=8, h=6, color=0xFFCCBCFF); 
+        // Beard
+        rect!(x=sx+1, y=sy+8, w=10, h=4, color=0xFFFFFFFF);
+        // Hat
+        rect!(x=sx, y=sy, w=12, h=4, color=0xD32F2FFF);
+        rect!(x=sx+10, y=sy+1, w=2, h=2, color=0xFFFFFFFF); // Pom
+        
+        // Debug/Hitbox (Optional, commented out)
+        // circ!(x=bx - br, y=by - br, d=(br*2) as u32, color=0xFF000044);
 
         // Bricks
         for b in &self.bricks {
