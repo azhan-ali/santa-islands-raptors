@@ -10,6 +10,7 @@ enum AppState {
     SinglePlayer,
     MultiplayerLevelSelect,
     MultiplayerSetup,
+    MultiplayerInstructions,
     Multiplayer,
     SinglePlayerFactory,
     SinglePlayerSleigh,
@@ -124,6 +125,7 @@ impl GameState {
                 AppState::SinglePlayer => self.update_single_player_menu(),
                 AppState::MultiplayerLevelSelect => self.update_multiplayer_level_select(),
                 AppState::MultiplayerSetup => self.update_multiplayer_setup(),
+                AppState::MultiplayerInstructions => self.update_multiplayer_instructions(),
                 AppState::Multiplayer => self.update_multiplayer(),
                 AppState::SinglePlayerFactory => self.update_single_player_factory(),
                 AppState::SinglePlayerSleigh => self.update_single_player_sleigh(),
@@ -405,7 +407,7 @@ impl GameState {
                          let p1 = self.p1_name.clone();
                          let p2 = self.p2_name.clone();
                          self.multiplayer_game = Some(MultiplayerGame::new(p1, p2, self.mp_duration, self.mp_level_selection)); // Uses stored level
-                         self.state = AppState::Multiplayer;
+                         self.state = AppState::MultiplayerInstructions;
                          self.transition_timer = 10;
                     }
                 },
@@ -419,6 +421,102 @@ impl GameState {
                 self.transition_timer = 10;
             }
         }
+    }
+
+
+    fn update_multiplayer_instructions(&mut self) {
+        let gp = gamepad::get(0);
+        let kb = turbo::keyboard::get();
+        
+        // SPACE or START to Start Game
+        if gp.start.just_pressed() || gp.a.just_pressed() || kb.space().just_pressed() {
+            self.state = AppState::Multiplayer;
+            self.transition_timer = 10;
+        }
+        
+        // B to Go Back to Setup
+        if gp.b.just_pressed() || kb.escape().just_pressed() {
+            self.state = AppState::MultiplayerSetup;
+            self.transition_timer = 10;
+        }
+    }
+    
+    fn draw_multiplayer_instructions(&self) {
+        let center_x = |text: &str, font_w: i32| -> i32 { (512 - (text.len() as i32 * font_w)) / 2 };
+        
+        let lvl = self.mp_level_selection;
+        let p1 = &self.p1_name;
+        let p2 = &self.p2_name;
+        
+        // Header
+        let title = format!("LEVEL {}", lvl);
+        text!(&title, x = center_x(&title, 8), y = 30, font = "large", color = 0xFFFF00FF);
+        
+        let sub = match lvl {
+            1 => "Classic Collection",
+            2 => "Shifting Village",
+            3 => "River Crossing",
+            4 => "Power & Peril",
+            5 => "The Dog Chase",
+            _ => "Unknown Level"
+        };
+        text!(sub, x = center_x(sub, 5), y = 55, font = "medium", color = 0x00FFFFFF);
+        
+        // Instructions Content
+        let start_y = 90;
+        let gap = 16;
+        let x_left = 60;
+        
+        let mut lines = vec![];
+        
+        lines.push(format!("Overview:"));
+        match lvl {
+            1 => {
+                lines.push("Collect houses to earn points.".to_string());
+                lines.push("Watch out for basic obstacles.".to_string());
+            },
+            2 => {
+                lines.push("Houses reshuffle every 15 seconds!".to_string());
+                lines.push("Beware of Bombs that reset your score.".to_string());
+            },
+            3 => {
+                lines.push("Cross the river carefully using bridges.".to_string());
+                lines.push("Don't fall in the water!".to_string());
+                lines.push("Shadow trails slow you down.".to_string());
+            },
+            4 => {
+                lines.push("Snowmen freeze you on contact!".to_string());
+                lines.push("Power House spawns Risky Gifts.".to_string());
+                lines.push("Risky Gift: +60 or -60 points!".to_string());
+            },
+            5 => {
+                lines.push("THE DOG IS WATCHING!".to_string());
+                lines.push("-60 Gift wakes the dog.".to_string());
+                lines.push("Dog bite = -100 points.".to_string());
+                lines.push("Goal: Survive & Score High.".to_string());
+            },
+             _ => {}
+        }
+        lines.push("".to_string());
+        
+        lines.push("Controls:".to_string());
+        lines.push(format!("P1 (Santa): W A S D"));
+        lines.push(format!("P2 (Rival): Arrow Keys"));
+        
+        lines.push("".to_string());
+        lines.push("Win Condition:".to_string());
+        lines.push("Highest score when time runs out wins!".to_string());
+        
+        for (i, line) in lines.iter().enumerate() {
+            let col = if line.ends_with(':') { 0xFFD700FF } else { 0xFFFFFFFF };
+            text!(line, x=x_left, y=start_y + (i as i32 * gap), font="medium", color=col);
+        }
+        
+        // Footer
+        let footer1 = "Press SPACE to START GAME";
+        let footer2 = "Press B / ESC to Go Back";
+        text!(footer1, x=center_x(footer1, 5), y=240, font="medium", color=0x00FF00FF);
+        text!(footer2, x=center_x(footer2, 5), y=260, font="small", color=0xAAAAAAFF);
     }
 
     fn update_developer(&mut self) {
@@ -442,6 +540,7 @@ impl GameState {
             AppState::SinglePlayer => self.draw_single_player_menu(),
             AppState::MultiplayerLevelSelect => self.draw_multiplayer_level_select(),
             AppState::MultiplayerSetup => self.draw_multiplayer_setup(),
+            AppState::MultiplayerInstructions => self.draw_multiplayer_instructions(),
             AppState::Multiplayer => {
                 if let Some(game) = &self.multiplayer_game {
                     game.draw();
