@@ -576,8 +576,8 @@ impl MultiplayerGame {
                              });
 
                              if self.current_level == 3 {
-                                 house.cooldown = 0; // Instant Active at new pos
-                                 house_reshuffle_indices.push(i); // Reshuffle
+                                 house.cooldown = 300; // Disable first. Only enable if successfully moved.
+                                 house_reshuffle_indices.push(i); 
                              } else {
                                  house.cooldown = 300; // L1/L2 Standard Cooldown
                              }
@@ -668,8 +668,8 @@ impl MultiplayerGame {
                  let start_x = if target_right { 280 } else { 40 };
                  let end_x = if target_right { 470 } else { 230 };
                  
-                 'grid: for gx in (start_x..end_x).step_by(30) {
-                     for gy in (40..250).step_by(30) {
+                 'grid: for gx in (start_x..end_x).step_by(15) {
+                     for gy in (40..250).step_by(15) {
                          let tx = gx as f32;
                          let ty = gy as f32;
                          
@@ -681,17 +681,17 @@ impl MultiplayerGame {
                          for (ox, oy) in &obstacle_pos {
                              if ((ox - tx).powi(2) + (oy - ty).powi(2)).sqrt() < 50.0 { safe = false; break; }
                          }
-                         // Check Decors
+                         // Check Decors - Reduced Radius 35.0 for Fallback
                          if safe {
                              for (dx, dy) in &decor_pos {
-                                 if ((dx - tx).powi(2) + (dy - ty).powi(2)).sqrt() < 45.0 { safe = false; break; }
+                                 if ((dx - tx).powi(2) + (dy - ty).powi(2)).sqrt() < 35.0 { safe = false; break; }
                              }
                          }
-                         // Check Houses
+                         // Check Houses - Reduced Radius 40.0 for Fallback
                          if safe {
                              for (i, (hx, hy)) in house_pos.iter().enumerate() {
                                  if i != idx {
-                                     if ((hx - tx).powi(2) + (hy - ty).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                                     if ((hx - tx).powi(2) + (hy - ty).powi(2)).sqrt() < 40.0 { safe = false; break; }
                                  }
                              }
                          }
@@ -710,16 +710,11 @@ impl MultiplayerGame {
              if placed {
                  self.houses[idx].x = new_x;
                  self.houses[idx].y = new_y;
-                 house_pos[idx] = (new_x, new_y); // Update snapshot
+                 self.houses[idx].cooldown = 0; // Successfully moved -> Enable immediately
+                 house_pos[idx] = (new_x, new_y); 
              } else {
-                 // Even Grid Failed? (Extremely unlikely)
-                 // Do NOTHING (leave house at old pos). 
-                 // This risks exponential score glitch (-20 loop), but better than overlap visual glitch?
-                 // User preferred fix overlap. 
-                 // Actually, if we leave it, the "same house" cooldown (-20 cooldown) protects from penalty spam.
-                 // But score loop (+5) might happen if correct house.
-                 // Let's force move to 0,0 (offscreen) or something? No.
-                 // We'll trust Grid Search succeeds (it searches ~100 spots).
+                 // Grid Failed. Keep Cooldown=300 (Disabled).
+                 // House stays in place but is inert for 5s. Prevents infinite loop.
              }
         }
 
