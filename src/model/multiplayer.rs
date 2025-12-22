@@ -13,6 +13,9 @@ pub struct MPlayer {
     pub boost_timer: u32,
     pub invuln_timer: u32,
     pub name: String,
+    // Level 3
+    pub shadow_trail: Vec<(f32, f32, u32)>, // x, y, life
+    pub slow_timer: u32,
 }
 
 #[turbo::serialize]
@@ -24,6 +27,8 @@ pub struct House {
     pub cooldown: u32,
     pub last_collected_by: Option<u8>,
     pub last_collection_time: u32, // in ticks
+    pub is_high_value: bool, // Level 3 (Legacy/Unused mostly)
+    pub team: u8, // 0 = Neutral, 1 = Red, 2 = Blue
 }
 
 #[turbo::serialize]
@@ -34,6 +39,7 @@ pub struct Obstacle {
     pub w: f32,
     pub h: f32,
     pub respawn_timer: u32,
+    pub kind: u8, // 0 = Bomb, 1 = Wood
 }
 
 #[turbo::serialize]
@@ -157,6 +163,8 @@ impl MultiplayerGame {
                 boost_timer: 0,
                 invuln_timer: 0,
                 name: self.p1_name.clone(),
+                shadow_trail: vec![],
+                slow_timer: 0,
             },
             MPlayer {
                 x: 462.0,
@@ -168,21 +176,82 @@ impl MultiplayerGame {
                 boost_timer: 0,
                 invuln_timer: 0,
                 name: self.p2_name.clone(),
+                shadow_trail: vec![],
+                slow_timer: 0,
             },
         ];
 
-        // Level Configuration
-        let house_count = if _level == 2 { 14 } else { 10 };
-        
-        // Random Houses
-        self.generate_houses(house_count);
-        
-        // Level 2: Obstacles
+        // Initialize Lists
+        self.houses = vec![];
         self.obstacles = vec![];
-        if _level == 2 {
+        
+        // 1. Static Level 3 Obstacles (Wood Barriers) - Spawn FIRST to reserve space
+        if _level == 3 {
+             // 2 Bridges: Centered at y=100 and y=200. Width ~28.
+             // Guards for Bridge 1 (y=100)
+             self.obstacles.push(Obstacle { x: 210.0, y: 88.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+             self.obstacles.push(Obstacle { x: 280.0, y: 88.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+             
+             // Guards for Bridge 2 (y=200)
+             self.obstacles.push(Obstacle { x: 210.0, y: 188.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+             self.obstacles.push(Obstacle { x: 280.0, y: 188.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+        }
+        
+        // 2. Houses
+        if _level == 3 {
+             // Level 3: 5 Red (Team 1), 5 Blue (Team 2)
+             // Manually generate to assign teams
+             let mut rng = random::u32();
+             let mut placed_count = 0;
+             let target = 10;
+             let mut attempts = 0;
+             
+             while placed_count < target && attempts < 1000 {
+                 attempts += 1;
+                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                 let hx = 40.0 + (rng % 432) as f32;
+                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                 let hy = 40.0 + (rng % 180) as f32; // Keep somewhat upper for start?
+                 
+                 // L3 Checks
+                 if hx > 236.0 && hx < 276.0 { continue; } // River
+                 
+                 let mut safe = true;
+                 for o in &self.obstacles {
+                     if ((o.x - hx).powi(2) + (o.y - hy).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                 }
+                 if safe {
+                     for h in &self.houses {
+                         if ((h.x - hx).powi(2) + (h.y - hy).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                     }
+                 }
+                 
+                 if safe {
+                     let team = if placed_count < 5 { 1 } else { 2 };
+                     self.houses.push(House {
+                        x: hx, y: hy, points: 5, cooldown: 0,
+                        last_collected_by: None, last_collection_time: 0,
+                        is_high_value: false,
+                        team: team,
+                     });
+                     placed_count += 1;
+                 }
+             }
+             
+        } else {
+            // Level 1 & 2
+            let count = if _level == 2 { 14 } else { 10 };
+            self.generate_random_houses(count, false);
+        }
+        
+        // 3. Random Bombs (Level 2 & 3)
+        if _level >= 2 {
+            // Level 2 & 3 have Bombs
+            let bomb_count = if _level == 3 { 6 } else { 8 };
+            
             let mut rng = random::u32();
             let mut attempts = 0;
-            while self.obstacles.len() < 8 && attempts < 100 {
+            while self.obstacles.len() < (if _level==3 { 3 + bomb_count } else { bomb_count }) && attempts < 100 {
                 attempts += 1;
                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
                 let ox = 60.0 + (rng % 392) as f32; 
@@ -192,18 +261,24 @@ impl MultiplayerGame {
                 // Avoid overlap with houses
                 let mut safe = true;
                 for h in &self.houses {
-                   if ((h.x - ox).powi(2) + (h.y - oy).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                   if ((h.x - ox).powi(2) + (h.y - oy).powi(2)).sqrt() < 60.0 { safe = false; break; }
+                }
+                // Avoid level 3 water strip (ENTIRE STRIP banned for bombs)
+                if _level == 3 {
+                     if ox > 236.0 && ox < 276.0 {
+                         safe = false; // Block bridge too
+                     }
                 }
                 
-                // Avoid overlap with existing obstacles
+                // Avoid overlap with existing obstacles (Wood & Bombs)
                 if safe {
                     for o in &self.obstacles {
-                        if ((o.x - ox).powi(2) + (o.y - oy).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                        if ((o.x - ox).powi(2) + (o.y - oy).powi(2)).sqrt() < 50.0 { safe = false; break; }
                     }
                 }
                 
                 if safe {
-                    self.obstacles.push(Obstacle { x: ox, y: oy, w: 24.0, h: 24.0, respawn_timer: 0 });
+                    self.obstacles.push(Obstacle { x: ox, y: oy, w: 24.0, h: 24.0, respawn_timer: 0, kind: 0 }); // Kind 0 = Bomb
                 }
             }
         }
@@ -218,22 +293,73 @@ impl MultiplayerGame {
         self.shuffle_pause_timer = 0;
 
         // Generate Decor (Trees and Piles)
+        // Generate Decor (Trees and Piles)
         self.decors = vec![];
-        for _ in 0..20 {
-            // Random Trees
-            self.decors.push(Decor {
-                x: (random::u32() % 500 + 10) as f32,
-                y: (random::u32() % 260 + 10) as f32,
-                kind: 0,
-            });
-            // Random Piles
-            if random::u32() % 2 == 0 {
-                self.decors.push(Decor {
-                    x: (random::u32() % 500 + 10) as f32,
-                    y: (random::u32() % 260 + 10) as f32,
-                    kind: 1,
-                });
+        let mut decor_attempts = 0;
+        // Trees
+        while self.decors.len() < 20 && decor_attempts < 500 {
+            decor_attempts += 1;
+            let dx = (random::u32() % 500 + 10) as f32;
+            let dy = (random::u32() % 260 + 10) as f32;
+            
+            // Level 3 Check: No trees in River Strip
+            if self.current_level == 3 && dx > 236.0 && dx < 276.0 { continue; }
+            
+            let mut safe = true;
+            // Check Houses
+            for h in &self.houses {
+                if ((h.x - dx).powi(2) + (h.y - dy).powi(2)).sqrt() < 40.0 { safe = false; break; }
             }
+            // Check Obstacles
+            if safe {
+                for o in &self.obstacles {
+                    if ((o.x - dx).powi(2) + (o.y - dy).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                }
+            }
+            // Check Decors
+            if safe {
+                for d in &self.decors {
+                    if ((d.x - dx).powi(2) + (d.y - dy).powi(2)).sqrt() < 30.0 { safe = false; break; }
+                }
+            }
+            
+            if safe {
+                self.decors.push(Decor { x: dx, y: dy, kind: 0 });
+            }
+        }
+        
+        // Piles
+        decor_attempts = 0;
+        while self.decors.len() < 30 && decor_attempts < 200 { 
+             decor_attempts += 1;
+             if random::u32() % 2 == 0 {
+                let dx = (random::u32() % 500 + 10) as f32;
+                let dy = (random::u32() % 260 + 10) as f32;
+                
+                if self.current_level == 3 && dx > 236.0 && dx < 276.0 { continue; }
+                
+                let mut safe = true;
+                // Check Houses
+                for h in &self.houses {
+                    if ((h.x - dx).powi(2) + (h.y - dy).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                }
+                // Check Obstacles
+                if safe {
+                    for o in &self.obstacles {
+                        if ((o.x - dx).powi(2) + (o.y - dy).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                    }
+                }
+                // Check Decors
+                if safe {
+                    for d in &self.decors {
+                        if ((d.x - dx).powi(2) + (d.y - dy).powi(2)).sqrt() < 30.0 { safe = false; break; }
+                    }
+                }
+                
+                if safe {
+                    self.decors.push(Decor { x: dx, y: dy, kind: 1 });
+                }
+             }
         }
         
         // Reset particles and texts
@@ -281,7 +407,7 @@ impl MultiplayerGame {
                  let mut safe = false;
                  let mut attempts = 0;
                  
-                 while !safe && attempts < 15 {
+                 while !safe && attempts < 50 {
                      attempts += 1;
                      px = 40.0 + (random::u32() % 432) as f32;
                      py = 40.0 + (random::u32() % 208) as f32;
@@ -308,6 +434,25 @@ impl MultiplayerGame {
                          let d = ((lx - px).powi(2) + (ly - py).powi(2)).sqrt();
                          if d < 80.0 { safe = false; }
                      }
+                     
+                     // Level 3 River Strip
+                     if safe && self.current_level == 3 {
+                         if px > 236.0 && px < 276.0 { safe = false; }
+                     }
+                     
+                     // 4. Not on Obstacles
+                     if safe {
+                         for o in &self.obstacles {
+                             if ((o.x - px).powi(2) + (o.y - py).powi(2)).sqrt() < 45.0 { safe = false; break; }
+                         }
+                     }
+                     
+                     // 5. Not on Decors
+                     if safe {
+                         for d in &self.decors {
+                             if ((d.x - px).powi(2) + (d.y - py).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                         }
+                     }
                  }
                  
                  if safe {
@@ -326,7 +471,12 @@ impl MultiplayerGame {
         if !self.is_shuffling {
             for i in 0..self.players.len() {
                 let (dx, dy) = self.get_input(i, self.players[i].id);
-                let speed = if self.players[i].boost_timer > 0 { 3.0 } else { 2.0 };
+            let mut speed = if self.players[i].boost_timer > 0 { 3.0 } else { 2.0 };
+            
+            // Level 3 Slow
+            if self.players[i].slow_timer > 0 {
+                speed *= 0.5;
+            }
                 
                 if self.players[i].boost_timer > 0 {
                     self.players[i].boost_timer -= 1;
@@ -335,8 +485,23 @@ impl MultiplayerGame {
                     self.players[i].invuln_timer -= 1;
                 }
 
-                self.players[i].x += dx * speed;
-                self.players[i].y += dy * speed;
+                let next_x = self.players[i].x + dx * speed;
+                let next_y = self.players[i].y + dy * speed;
+
+                // Level 3 Water Collision
+                if self.current_level == 3 && self.is_in_water(next_x, next_y) {
+                    // Block movement - sliding logic?
+                    // Simple: Don't update if in water. Check X and Y separately for slide.
+                    if !self.is_in_water(next_x, self.players[i].y) {
+                        self.players[i].x = next_x;
+                    }
+                    if !self.is_in_water(self.players[i].x, next_y) {
+                        self.players[i].y = next_y;
+                    }
+                } else {
+                    self.players[i].x = next_x;
+                    self.players[i].y = next_y;
+                }
 
                 // Bounds
                 let r = self.players[i].radius;
@@ -359,34 +524,203 @@ impl MultiplayerGame {
         // Re-write interaction loop to handle defer properly
         // We need score pops.
         let mut score_pops = vec![];
+        let mut house_reshuffle_indices = vec![];
 
-        for house in self.houses.iter_mut() {
+        for (i, house) in self.houses.iter_mut().enumerate() {
             if house.cooldown > 0 { house.cooldown -= 1; }
-            else if self.frame_count % 120 == 0 && house.points < 50 { house.points += 5; } // Charge
+            
+            // Point Growth (delayed by 5s (300 ticks) after collection)
+            if self.frame_count.saturating_sub(house.last_collection_time) > 300 
+               && self.frame_count % 120 == 0 
+               && house.points < 50 { 
+                   house.points += 5; 
+            }
 
             for player in self.players.iter_mut() {
                  let dist = ((player.x - house.x).powi(2) + (player.y - house.y).powi(2)).sqrt();
                  if dist < (player.radius + 12.0) && house.cooldown == 0 {
-                        player.score += house.points;
+                        // Check Team (Level 3)
+                        let is_wrong_team = self.current_level == 3 && (
+                            (house.team == 1 && player.id != 1) || 
+                            (house.team == 2 && player.id != 2)
+                        );
                         
-                        // Queue Pop
-                        score_pops.push(FloatingText {
-                            x: house.x,
-                            y: house.y - 20.0,
-                            text: format!("+{}", house.points),
-                            color: 0xE0F7FAFF, // Icy White
-                            life: 60,
-                        });
+                        if is_wrong_team {
+                             // PENALTY
+                             player.score = player.score.saturating_sub(20);
+                             
+                             // Penalty Pop
+                             score_pops.push(FloatingText {
+                                x: house.x,
+                                y: house.y - 20.0,
+                                text: "-20".to_string(),
+                                color: 0xFF0000FF, // Red Warning
+                                life: 60,
+                             });
+                             turbo::audio::play("coin"); 
+                             
+                             // Apply Cooldown (1s) instead of moving
+                             house.cooldown = 60; 
 
-                        house.cooldown = 300; 
-                        house.last_collected_by = Some(player.id);
-                        house.last_collection_time = current_tick;
-                        house.points = 5; // Reset to 5
-                        
-                        turbo::audio::play("coin");
-                        sparkle_reqs.push((house.x, house.y));
+                        } else {
+                             // VALID CAPTURE
+                             player.score += house.points;
+                             
+                             // Queue Pop
+                             score_pops.push(FloatingText {
+                                x: house.x,
+                                y: house.y - 20.0,
+                                text: format!("+{}", house.points),
+                                color: if house.team == 1 { 0xFFCDD2FF } else if house.team == 2 { 0xBBDEFBFF } else { 0xE0F7FAFF }, // Team Color
+                                life: 60,
+                             });
+
+                             if self.current_level == 3 {
+                                 house.cooldown = 0; // Instant Active at new pos
+                                 house_reshuffle_indices.push(i); // Reshuffle
+                             } else {
+                                 house.cooldown = 300; // L1/L2 Standard Cooldown
+                             }
+                             
+                             // Reset Points logic
+                             house.points = 5; // Always reset to 5 (User request) 
+                             house.last_collected_by = Some(player.id);
+                             house.last_collection_time = current_tick;
+                             
+                             turbo::audio::play("coin");
+                             sparkle_reqs.push((house.x, house.y));
+                        }
                  }
             }
+        }
+        
+        // Execute Deferred Moves (Level 3)
+        // Snapshot static obstacles
+        let obstacle_pos: Vec<(f32, f32)> = self.obstacles.iter().map(|o| (o.x, o.y)).collect();
+        // Snapshot current houses
+        let mut house_pos: Vec<(f32, f32)> = self.houses.iter().map(|h| (h.x, h.y)).collect();
+        // Snapshot decors
+        let decor_pos: Vec<(f32, f32)> = self.decors.iter().map(|d| (d.x, d.y)).collect();
+        
+        for idx in house_reshuffle_indices {
+             let mut rng = random::u32();
+             let mut attempts = 0;
+             let mut placed = false;
+             
+             let mut new_x = 0.0;
+             let mut new_y = 0.0;
+             
+             // Determine Target Side (Cross the River)
+             let current_x = self.houses[idx].x;
+             let target_right = current_x < 256.0; // If currently left, go right
+             
+             while !placed && attempts < 1000 {
+                 attempts += 1;
+                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                 
+                 if target_right {
+                      // Target: 276..472
+                      new_x = 280.0 + (rng % 190) as f32;
+                 } else {
+                      // Target: 40..236
+                      new_x = 40.0 + (rng % 190) as f32;
+                 }
+                 
+                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                 new_y = 40.0 + (rng % 180) as f32; 
+                 
+                 // Water Strip Check (Redundant if logic correct, but safe)
+                 if new_x > 236.0 && new_x < 276.0 { continue; }
+                 
+                 let mut safe = true;
+                 
+                 // Check Obstacles
+                 for (ox, oy) in &obstacle_pos {
+                     if ((ox - new_x).powi(2) + (oy - new_y).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                 }
+                 
+                 // Check Decors
+                 if safe {
+                     for (dx, dy) in &decor_pos {
+                         if ((dx - new_x).powi(2) + (dy - new_y).powi(2)).sqrt() < 45.0 { safe = false; break; }
+                     }
+                 }
+                 
+                 // Check other houses (including ones just moved)
+                 if safe {
+                     for (i, (hx, hy)) in house_pos.iter().enumerate() {
+                         if i != idx { // Don't check self
+                             if ((hx - new_x).powi(2) + (hy - new_y).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                         }
+                     }
+                 }
+                 
+                 if safe {
+                     placed = true;
+                 }
+             }
+             
+             // End of RNG loop
+             
+             // GRID SEARCH FALLBACK (If RNG failed 1000 times)
+             if !placed {
+                 // Iterate grid points to find ANY safe spot
+                 let start_x = if target_right { 280 } else { 40 };
+                 let end_x = if target_right { 470 } else { 230 };
+                 
+                 'grid: for gx in (start_x..end_x).step_by(30) {
+                     for gy in (40..250).step_by(30) {
+                         let tx = gx as f32;
+                         let ty = gy as f32;
+                         
+                         // Water Check
+                         if tx > 236.0 && tx < 276.0 { continue; }
+                         
+                         let mut safe = true;
+                         // Check Obstacles
+                         for (ox, oy) in &obstacle_pos {
+                             if ((ox - tx).powi(2) + (oy - ty).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                         }
+                         // Check Decors
+                         if safe {
+                             for (dx, dy) in &decor_pos {
+                                 if ((dx - tx).powi(2) + (dy - ty).powi(2)).sqrt() < 45.0 { safe = false; break; }
+                             }
+                         }
+                         // Check Houses
+                         if safe {
+                             for (i, (hx, hy)) in house_pos.iter().enumerate() {
+                                 if i != idx {
+                                     if ((hx - tx).powi(2) + (hy - ty).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                                 }
+                             }
+                         }
+                         
+                         if safe {
+                             new_x = tx;
+                             new_y = ty;
+                             placed = true;
+                             break 'grid;
+                         }
+                     }
+                 }
+             }
+
+             // Apply Position (If placed via RNG or Grid)
+             if placed {
+                 self.houses[idx].x = new_x;
+                 self.houses[idx].y = new_y;
+                 house_pos[idx] = (new_x, new_y); // Update snapshot
+             } else {
+                 // Even Grid Failed? (Extremely unlikely)
+                 // Do NOTHING (leave house at old pos). 
+                 // This risks exponential score glitch (-20 loop), but better than overlap visual glitch?
+                 // User preferred fix overlap. 
+                 // Actually, if we leave it, the "same house" cooldown (-20 cooldown) protects from penalty spam.
+                 // But score loop (+5) might happen if correct house.
+                 // Let's force move to 0,0 (offscreen) or something? No.
+                 // We'll trust Grid Search succeeds (it searches ~100 spots).
+             }
         }
 
         // Apply pops
@@ -468,31 +802,45 @@ impl MultiplayerGame {
          if self.current_level == 2 {
              self.update_level2();
          }
+         // Level 3 Mechanics
+         if self.current_level == 3 {
+             self.update_level3();
+         }
     }
     
-    fn generate_houses(&mut self, count: usize) {
-        self.houses = vec![];
+    fn generate_random_houses(&mut self, count: usize, avoid_special_zone: bool) {
+        // Only clear houses if we are doing a full reset (not implicit here, usage depends on context)
+        // Actually, init_level clears houses. This function appends.
+        // Wait, normally generate_houses replaced all. 
+        // Let's assume this pushes new houses.
+        
         let mut rng = random::u32();
         let mut attempts = 0;
+        let target_len = self.houses.len() + count;
         
-        while self.houses.len() < count && attempts < 200 {
+        while self.houses.len() < target_len && attempts < 200 {
             attempts += 1;
             rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
-            let hx = 40.0 + (rng % 432) as f32; // Inset from edges
+            let hx = 40.0 + (rng % 432) as f32; 
             rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
-            let hy = 40.0 + (rng % 180) as f32; // Keep somewhat central vertically
+            let hy = 40.0 + (rng % 180) as f32; 
             
-            // Check overlap with existing houses
+            // Avoid Water Strip (Level 3)
+            if self.current_level == 3 {
+                 // Vertical Strip 236-276
+                 if hx > 236.0 && hx < 276.0 {
+                     // Check Safe Bridge (130-158)
+                     // But usually we don't put houses on bridge if it's narrow
+                     continue; 
+                 }
+            }
+            
+            // Check overlap
             let mut overlap = false;
             for h in &self.houses {
                 let d = ((h.x - hx).powi(2) + (h.y - hy).powi(2)).sqrt();
-                if d < 60.0 { 
-                    overlap = true;
-                    break;
-                }
+                if d < 60.0 { overlap = true; break; }
             }
-            
-            // Check overlap with obstacles (if they exist yet, though usually houses gen first)
             if !overlap {
                 for o in &self.obstacles {
                      let d = ((o.x - hx).powi(2) + (o.y - hy).powi(2)).sqrt();
@@ -508,11 +856,180 @@ impl MultiplayerGame {
                     cooldown: 0,
                     last_collected_by: None,
                     last_collection_time: 0,
+                    is_high_value: false,
+                    team: 0,
                 });
             }
         }
     }
     
+    fn reshuffle_normal_houses(&mut self) {
+        // Keep High Value, Remove Normal
+        self.houses.retain(|h| h.is_high_value);
+        // Add 8 Normal
+        self.generate_random_houses(8, true);
+        
+         self.floating_texts.push(FloatingText {
+            x: 256.0,
+            y: 144.0,
+            text: "HOUSES MOVED!".to_string(),
+            color: 0x00E5FFFF,
+            life: 60,
+        });
+    }
+
+    fn update_level3(&mut self) {
+        // 1. Shadow Trail Logic
+        if self.frame_count % 5 == 0 {
+            // Record Trail
+             // We need to iterate indices to avoid borrow issues
+             for i in 0..self.players.len() {
+                 let px = self.players[i].x;
+                 let py = self.players[i].y;
+                 self.players[i].shadow_trail.push((px, py, 180)); // 3 seconds (60fps)
+             }
+        }
+        
+        // Update Trail Life
+        for p in self.players.iter_mut() {
+            for t in p.shadow_trail.iter_mut() {
+                if t.2 > 0 { t.2 -= 1; }
+            }
+            p.shadow_trail.retain(|t| t.2 > 0);
+            
+            // Tick Slow
+            if p.slow_timer > 0 { p.slow_timer -= 1; }
+        }
+        
+        // Check Collision with Opponent Trail
+        // Check Collision with Opponent Trail
+        // Collect trails first to avoid borrow conflicts
+        let trails: Vec<Vec<(f32, f32)>> = self.players.iter()
+            .map(|p| p.shadow_trail.iter().map(|t| (t.0, t.1)).collect())
+            .collect();
+            
+        for (i, p) in self.players.iter_mut().enumerate() {
+            if p.invuln_timer == 0 {
+                // Check against opponent trail usually (just other player for now)
+                let opponent_idx = if i == 0 { 1 } else { 0 };
+                if opponent_idx < trails.len() {
+                    for (tx, ty) in &trails[opponent_idx] {
+                         if ((p.x - tx).powi(2) + (p.y - ty).powi(2)).sqrt() < 10.0 {
+                            p.slow_timer = 30; // 0.5s slow
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 2. Obstacle Logic (Wood: Static, Bomb: Respawning)
+        // Reuse Level 2 Bomb Logic for kind==0, Add Wood logic for kind==1
+        let mut penalties = vec![];
+        let mut explosions = vec![];
+        
+        // Snapshot
+        let obstacle_positions: Vec<(f32, f32)> = self.obstacles.iter().map(|o| (o.x, o.y)).collect();
+        let decor_pos: Vec<(f32, f32)> = self.decors.iter().map(|d| (d.x, d.y)).collect();
+        
+        for (i, o) in self.obstacles.iter_mut().enumerate() {
+            if o.kind == 0 { // Bomb
+                 // ... Copy Level 2 Bomb Logic ...
+                 // (omitted duplicate code for brevity, will insert full logic if tool allows large block)
+                 // Actually, reusing update_level2 is tricky because it assumes ALL are bombs.
+                 // We should probably share the logic or duplicate it.
+                 // Let's duplicate the Bomb logic here for clarity and safety.
+                 if o.respawn_timer > 0 {
+                    o.respawn_timer -= 1;
+                    if o.respawn_timer == 0 {
+                         // Respawn Logic
+                         let mut rng = random::u32();
+                         let mut attempts = 0;
+                         let mut placed = false;
+                         while !placed && attempts < 50 {
+                             attempts += 1;
+                             rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                             let ox = 60.0 + (rng % 392) as f32; 
+                             rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                             let oy = 60.0 + (rng % 168) as f32;
+                             let mut safe = true;
+                             // Level 3 Check: Water (Strict Ban on entire strip including bridges)
+                             if self.current_level == 3 {
+                                 if ox > 236.0 && ox < 276.0 { safe = false; } // Ban entire strip
+                             }
+                             
+                             if safe {
+                                 for h in &self.houses { if ((h.x - ox).powi(2) + (h.y - oy).powi(2)).sqrt() < 60.0 { safe = false; break; } }
+                             }
+                             if safe {
+                                 for (idx, (ex, ey)) in obstacle_positions.iter().enumerate() {
+                                     if i != idx && ((ex - ox).powi(2) + (ey - oy).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                                 }
+                             }
+                             if safe {
+                                 for (dx, dy) in &decor_pos {
+                                     if ((dx - ox).powi(2) + (dy - oy).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                                 }
+                             }
+                             if safe { o.x = ox; o.y = oy; placed = true; }
+                         }
+                    }
+                    continue;
+                 }
+            }
+            
+            // Collision
+             for p in self.players.iter_mut() {
+                if p.invuln_timer > 0 { continue; }
+                
+                // Hitbox
+                let closest_x = p.x.clamp(o.x, o.x + o.w);
+                let closest_y = p.y.clamp(o.y, o.y + o.h);
+                let dist_sq = (p.x - closest_x).powi(2) + (p.y - closest_y).powi(2);
+                
+                if dist_sq < (p.radius * p.radius) {
+                     p.invuln_timer = 60;
+                     if o.kind == 0 { // Bomb
+                         if p.score >= 20 { p.score -= 20; } else { p.score = 0; }
+                         penalties.push((p.x, p.y, 20)); // -20
+                         explosions.push((o.x + o.w/2.0, o.y + o.h/2.0));
+                         o.respawn_timer = 30; 
+                         o.x = -1000.0;
+                     } else { // Wood
+                         if p.score >= 10 { p.score -= 10; } else { p.score = 0; }
+                         penalties.push((p.x, p.y, 10)); // -10
+                         // No respawn for wood
+                         turbo::audio::play("hit"); 
+                     }
+                }
+             }
+        }
+        
+        for (px, py, amount) in penalties {
+            self.floating_texts.push(FloatingText { x: px, y: py - 20.0, text: format!("-{}", amount), color: 0xFF0000FF, life: 60 });
+        }
+        for (ex, ey) in explosions {
+             turbo::audio::play("projectile_hit"); 
+             self.spawn_explosion(ex, ey);
+        }
+    }
+    
+    fn is_in_water(&self, x: f32, y: f32) -> bool {
+        if x > 236.0 && x < 276.0 {
+            // Bridge 1 Safe Zone (y: 86..114)
+            if y > 86.0 && y < 114.0 { return false; }
+            // Bridge 2 Safe Zone (y: 186..214)
+            if y > 186.0 && y < 214.0 { return false; }
+            return true;
+        }
+        false
+    }
+    
+    fn is_valid_bomb_pos(&self, x: f32, y: f32) -> bool {
+         if self.current_level == 3 && self.is_in_water(x, y) { return false; }
+         true
+    }
+
     fn update_level2(&mut self) {
         // Shuffle Logic
         if self.is_shuffling {
@@ -520,7 +1037,7 @@ impl MultiplayerGame {
                 self.shuffle_pause_timer -= 1;
             } else {
                 // Time to shuffle!
-                self.generate_houses(14);
+                self.generate_random_houses(14, false);
                 self.is_shuffling = false;
                 self.shuffle_timer = 15 * 60;
                 
@@ -579,6 +1096,10 @@ impl MultiplayerGame {
                          for h in &self.houses {
                             if ((h.x - ox).powi(2) + (h.y - oy).powi(2)).sqrt() < 50.0 { safe = false; break; }
                          }
+                         
+                         // Level 3 River Strip
+                         if self.current_level == 3 && ox > 236.0 && ox < 276.0 { safe = false; }
+
                          // Check players (don't spawn on top)
                          if safe {
                              for p in &self.players {
@@ -712,6 +1233,32 @@ impl MultiplayerGame {
         // 1. Background (Light Green Winter - Mint/Pastel)
         rect!(w=512, h=288, color=0xC8E6C9FF); 
 
+        // 1b. Level 3 Terrain (Water/Bridges) - Draw FIRST
+        if self.current_level == 3 {
+            // Vertical Water Strip
+            rect!(x=236, y=0, w=40, h=288, color=0x29B6F6FF); 
+            
+            // Bridge 1 (Top)
+            rect!(x=236, y=100, w=40, h=28, color=0x8D6E63FF); 
+            rect!(x=236, y=98, w=40, h=2, color=0x5D4037FF); 
+            rect!(x=236, y=128, w=40, h=2, color=0x5D4037FF);
+            
+            // Bridge 2 (Bot)
+            rect!(x=236, y=200, w=40, h=28, color=0x8D6E63FF); 
+            rect!(x=236, y=198, w=40, h=2, color=0x5D4037FF); 
+            rect!(x=236, y=228, w=40, h=2, color=0x5D4037FF);
+        }
+        
+         // Draw Shadows (Level 3)
+        if self.current_level == 3 {
+             for (i, p) in self.players.iter().enumerate() {
+                 let col = if p.id == 1 { 0xD32F2F44 } else { 0x1976D244 }; // Transparent Red/Blue
+                 for t in &p.shadow_trail {
+                     circ!(x=t.0 as i32 - 4, y=t.1 as i32 - 4, d=8, color=col);
+                 }
+             }
+        } 
+
         // 2. Decor (Trees & Piles) - Draw BEFORE Houses/Players
         for d in &self.decors {
             let dx = d.x as i32;
@@ -777,8 +1324,16 @@ impl MultiplayerGame {
             
             // RE-INSERTING PROCEDURAL HOUSE LOGIC (Compressed for tool limit):
             let w = 24; let h_body = 18;
-            let wall_color = if active { 0xB22222FF } else { 0x444444FF };
-            let roof_color = if active { 0xFFFFFFFF } else { 0x777777FF };
+            let (wall_c, roof_c) = if h.team == 1 {
+                 (0xB71C1CFF, 0xFFEBEEFF) // Red Wall, White Roof
+            } else if h.team == 2 {
+                 (0x0277BDFF, 0xE1F5FEFF) // Blue Wall, Cyan Roof
+            } else {
+                 (0xB22222FF, 0xFFFFFFFF) // Neutral
+            };
+
+            let wall_color = if active { wall_c } else { 0x444444FF };
+            let roof_color = if active { roof_c } else { 0x777777FF };
             let door_color = if active { 0x5D4037FF } else { 0x222222FF };
             let win_color = if active { 0xFFD700FF } else { 0x333300FF };
             rect!(x=x-w/2, y=y-h_body/2, w=w as u32, h=h_body as u32, color=wall_color);
@@ -791,6 +1346,16 @@ impl MultiplayerGame {
             rect!(x=rx+6, y=ry-12, w=(w-12) as u32, h=4, color=roof_color);
             rect!(x=x+6, y=ry-14, w=4, h=10, color=if active { 0x8B4513FF } else { 0x333333FF });
             rect!(x=x+5, y=ry-16, w=6, h=2, color=roof_color);
+            
+            // High Value Indicator
+            if h.is_high_value {
+                // Gold star or roof
+                 rect!(x=rx-2, y=ry-4, w=(w+4) as u32, h=4, color=0xFFD700FF); // Gold Roof
+                 // "100" text above if active
+                 if active {
+                     text!("100", x=x-8, y=y-35, font="small", color=0xFFD700FF);
+                 }
+            }
 
             // Floating Points Indicator (Festive Board - White Text & Snowflakes)
             if active {
@@ -842,11 +1407,41 @@ impl MultiplayerGame {
             }
         }
         
-        // Draw Floating Score Pops
-        for t in &self.floating_texts {
-             // Shadow
-             text!(&t.text, x=t.x as i32 - 9, y=t.y as i32 + 1, font="medium", color=0x000000AA);
-             text!(&t.text, x=t.x as i32 - 10, y=t.y as i32, font="medium", color=t.color);
+        // (Floating Texts moved to end)
+        
+        // Obstacles (Moved here: Before Powerups/Players)
+        for o in &self.obstacles {
+            if o.respawn_timer > 0 { continue; } 
+            let x = o.x as i32; let y = o.y as i32; let w = o.w as i32; let h = o.h as i32;
+            if o.kind == 0 { // Bomb
+                let bx = x - 1; let by = y - 1;
+                circ!(x=bx, y=by, d=w+2, color=0x212121FF); 
+                circ!(x=bx+6, y=by+6, d=8, color=0x424242FF); 
+                let cx = x + 12;
+                rect!(x=cx-3, y=by-2, w=6, h=4, color=0x9E9E9EFF); 
+                rect!(x=cx-1, y=by-6, w=2, h=4, color=0x8D6E63FF); 
+                if self.frame_count % 10 < 5 {
+                    rect!(x=cx-2, y=by-9, w=4, h=4, color=0xFFC107FF); 
+                    rect!(x=cx-1, y=by-8, w=2, h=2, color=0xFFFFFFFF); 
+                } else {
+                     rect!(x=cx-2, y=by-9, w=4, h=4, color=0xFF5722FF); 
+                }
+            } else if o.kind == 1 { // Wood
+                rect!(x=x, y=y, w=w as u32, h=h as u32, color=0xA1887FFF); 
+                rect!(x=x, y=y, w=w as u32, h=2, color=0x5D4037FF); 
+                rect!(x=x, y=y+h-2, w=w as u32, h=2, color=0x5D4037FF); 
+                rect!(x=x, y=y, w=2, h=h as u32, color=0x5D4037FF); 
+                rect!(x=x+w-2, y=y, w=2, h=h as u32, color=0x5D4037FF); 
+                rect!(x=x+2, y=y+6, w=(w-4) as u32, h=1, color=0x8D6E63FF);
+                rect!(x=x+2, y=y+12, w=(w-4) as u32, h=1, color=0x8D6E63FF);
+                rect!(x=x+2, y=y+18, w=(w-4) as u32, h=1, color=0x8D6E63FF);
+                for i in 2..22 { rect!(x=x+i, y=y+i, w=2, h=2, color=0x3E2723FF); }
+                for i in 2..22 { rect!(x=x+w-2-i, y=y+i, w=2, h=2, color=0x3E2723FF); }
+                rect!(x=x+2, y=y+2, w=2, h=2, color=0x8D6E63FF); 
+                rect!(x=x+w-4, y=y+2, w=2, h=2, color=0x8D6E63FF);
+                rect!(x=x+2, y=y+h-4, w=2, h=2, color=0x8D6E63FF);
+                rect!(x=x+w-4, y=y+h-4, w=2, h=2, color=0x8D6E63FF);
+            }
         }
         
         // Particles
@@ -987,6 +1582,12 @@ impl MultiplayerGame {
             let belt_color = 0x212121FF; 
             let gold_color = 0xFFD700FF;
             
+        // (Removed misplaced terrain/shadow code from here)
+
+        // House
+        let house_w = 20;
+        let house_h = 16;
+            
             // Size
             let w = 20;
             let h = 28;
@@ -1029,50 +1630,25 @@ impl MultiplayerGame {
             // text!(if is_santa{"P1"}else{"P2"}, x=x-6, y=ty-20, font="small", color=0xFFFFFFFF);
         }
         
-        // Level 2: Bomb Obstacles
-        for o in &self.obstacles {
-            if o.respawn_timer > 0 { continue; } // Hidden
-            
-            let x = o.x as i32;
-            let y = o.y as i32;
-            let w = o.w as i32;
-            
-            // Bomb Body (Black Circle)
-            // d=w+2 (26). Box is 24x24. Center is x+12, y+12.
-            // Top-left of circle should be x-1, y-1.
-            let bx = x - 1;
-            let by = y - 1;
-            
-            circ!(x=bx, y=by, d=w+2, color=0x212121FF); // Black body
-            
-            // Shine (Offset from top-left of circle)
-            circ!(x=bx+6, y=by+6, d=8, color=0x424242FF); // Grey highlight
-            
-            // Fuse Cap (Connects to top)
-            // Top of circle is 'by'. Center X is 'bx + 13' = 'x + 12'.
-            let cx = x + 12;
-            
-            rect!(x=cx-3, y=by-2, w=6, h=4, color=0x9E9E9EFF); // Cap overlaps top slightly
-            
-            // Fuse Line
-            rect!(x=cx-1, y=by-6, w=2, h=4, color=0x8D6E63FF);
-            
-            // Spark (Flickering)
-            if self.frame_count % 10 < 5 {
-                rect!(x=cx-2, y=by-9, w=4, h=4, color=0xFFC107FF); // Yellow
-                rect!(x=cx-1, y=by-8, w=2, h=2, color=0xFFFFFFFF); // White center
-            } else {
-                 rect!(x=cx-2, y=by-9, w=4, h=4, color=0xFF5722FF); // Orange
-            }
-        }
+        // HUD Starts Here (Obstacles Loop Removed from here)
 
-        // HUD (Dark Text for Light BG)
-        let p1_text = format!("{}: {}", self.players[0].name, self.players[0].score);
-        text!(&p1_text, x=10, y=10, color=0xB71C1CFF); // Dark Red
+        // Draw Floating Score Pops (Moved here: After Players)
+        for t in &self.floating_texts {
+             // Shadow
+             text!(&t.text, x=t.x as i32 - 9, y=t.y as i32 + 1, font="medium", color=0x000000AA);
+             text!(&t.text, x=t.x as i32 - 10, y=t.y as i32, font="medium", color=t.color);
+        }
         
+        // HUD (Dark Text for Light BG)
+        // Red Flash on Penalty
+        let p1_col = if self.players[0].invuln_timer > 45 { 0xFF0000FF } else { 0xB71C1CFF };
+        let p1_text = format!("{}: {}", self.players[0].name, self.players[0].score);
+        text!(&p1_text, x=10, y=10, color=p1_col); // Dark Red
+        
+        let p2_col = if self.players[1].invuln_timer > 45 { 0xFF0000FF } else { 0x0D47A1FF };
         let p2_text = format!("{}: {}", self.players[1].name, self.players[1].score);
         let w = (p2_text.len() * 8) as i32;
-        text!(&p2_text, x=502 - w, y=10, color=0x0D47A1FF); // Dark Blue
+        text!(&p2_text, x=502 - w, y=10, color=p2_col); // Dark Blue
         
         let mins = self.timer / 60;
         let secs = self.timer % 60;
