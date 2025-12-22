@@ -2,7 +2,7 @@
 
 **Christmas Adventure** is a festive collection of retro-style mini-games designed to bring holiday cheer! Built with Rust and the Turbo game engine, it features a variety of challenges ranging from arcade shooters to stealth missions, all wrapped in pixel-perfect Christmas aesthetics.
 
-![Game Screenshot](https://i.ibb.co/Z6P5GyYF/Untitled-design.png) *(Replace with actual screenshot)*
+![Game Screenshot](https://i.ibb.co/Z6P5GyYF/Untitled-design.png)
 
 ## 🎮 Game Modes
 
