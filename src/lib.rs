@@ -612,6 +612,14 @@ impl GameState {
         }
         
         // Draw
+        
+        // Background Snow
+        for flake in &self.snow {
+             // Use SnowFlake::draw OR manually. SnowFlake has .size field, not .r
+             let sz = flake.size;
+             rect!(x=flake.x as i32, y=flake.y as i32, w=sz, h=sz, color=0xFFFFFF66);
+        }
+        
         text!(title, x = center_x(title, 8), y = 15, font = "large", color = 0xFFFF00FF);
         text!(overview, x = center_x(overview, 5), y = 40, font = "medium", color = 0x00FFFFFF);
         

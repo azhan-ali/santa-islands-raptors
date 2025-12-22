@@ -38,6 +38,14 @@ pub struct FactoryMessage {
 }
 
 #[turbo::serialize]
+pub struct FactorySnow {
+    pub x: f32,
+    pub y: f32,
+    pub r: f32,
+    pub v: f32,
+}
+
+#[turbo::serialize]
 pub struct FactoryGame {
     pub score: i32,
     pub time_left: f32,
@@ -51,14 +59,23 @@ pub struct FactoryGame {
     pub gifts: Vec<FactoryGift>,
     pub particles: Vec<FactoryParticle>,
     pub messages: Vec<FactoryMessage>,
+    pub snow: Vec<FactorySnow>,
     
     pub spawn_timer: u32,
     pub belt_anim_offset: f32,
 }
 
 impl FactoryGame {
+
     pub fn new() -> Self {
-        Self {
+        
+        // Init Snow
+
+        // Actually, just loop and push after creation if I change structure,
+        // or just vec![] and loop.
+        
+        // Let's rewrite the method slightly to be cleaner.
+        let mut game = Self {
             score: 0,
             time_left: 60.0,
             game_over: false,
@@ -71,7 +88,19 @@ impl FactoryGame {
             messages: vec![],
             spawn_timer: 0,
             belt_anim_offset: 0.0,
+            snow: vec![],
+        };
+        
+        for _ in 0..50 {
+             game.snow.push(FactorySnow {
+                x: (rand() % 512) as f32,
+                y: (rand() % 288) as f32,
+                r: (rand() % 2 + 1) as f32,
+                v: (rand() % 2 + 1) as f32,
+             });
         }
+        
+        game
     }
 
     pub fn update(&mut self) {
@@ -139,6 +168,12 @@ impl FactoryGame {
             m.life -= 0.02;
         }
         self.messages.retain(|m| m.life > 0.0);
+        
+        // Snow
+        for s in &mut self.snow {
+            s.y += s.v;
+            if s.y > 288.0 { s.y = -5.0; s.x = (rand() % 512) as f32; }
+        }
     }
 
     fn spawn_gift(&mut self) {
@@ -248,6 +283,11 @@ impl FactoryGame {
     pub fn draw(&self) {
         // Clear Black
         rect!(w=512, h=288, color=0x000000FF);
+        
+        // Background Snow
+        for s in &self.snow {
+             circ!(x=s.x as i32, y=s.y as i32, d=(s.r * 2.0) as u32, color=0xFFFFFF66);
+        }
 
         // Belt (Top)
         let belt_y = 40;
