@@ -803,7 +803,7 @@ impl MultiplayerGame {
          }
     }
     
-    fn generate_random_houses(&mut self, count: usize, avoid_special_zone: bool) {
+    fn generate_random_houses(&mut self, count: usize, _avoid_special_zone: bool) {
         // Only clear houses if we are doing a full reset (not implicit here, usage depends on context)
         // Actually, init_level clears houses. This function appends.
         // Wait, normally generate_houses replaced all. 
@@ -858,6 +858,7 @@ impl MultiplayerGame {
         }
     }
     
+    #[allow(dead_code)]
     fn reshuffle_normal_houses(&mut self) {
         // Keep High Value, Remove Normal
         self.houses.retain(|h| h.is_high_value);
@@ -1020,6 +1021,7 @@ impl MultiplayerGame {
         false
     }
     
+    #[allow(dead_code)]
     fn is_valid_bomb_pos(&self, x: f32, y: f32) -> bool {
          if self.current_level == 3 && self.is_in_water(x, y) { return false; }
          true
@@ -1246,7 +1248,7 @@ impl MultiplayerGame {
         
          // Draw Shadows (Level 3)
         if self.current_level == 3 {
-             for (i, p) in self.players.iter().enumerate() {
+             for (_i, p) in self.players.iter().enumerate() {
                  let col = if p.id == 1 { 0xD32F2F44 } else { 0x1976D244 }; // Transparent Red/Blue
                  for t in &p.shadow_trail {
                      circ!(x=t.0 as i32 - 4, y=t.1 as i32 - 4, d=8, color=col);
@@ -1580,8 +1582,8 @@ impl MultiplayerGame {
         // (Removed misplaced terrain/shadow code from here)
 
         // House
-        let house_w = 20;
-        let house_h = 16;
+        let _house_w = 20;
+        let _house_h = 16;
             
             // Size
             let w = 20;

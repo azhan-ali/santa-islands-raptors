@@ -11,6 +11,10 @@ enum AppState {
     MultiplayerLevelSelect,
     MultiplayerSetup,
     Multiplayer,
+    SinglePlayerFactory,
+    SinglePlayerSleigh,
+    SinglePlayerBreaker,
+    SinglePlayerStealth,
     Developer,
 }
 
@@ -31,6 +35,10 @@ struct GameState {
     transition_timer: u32,
     music_started: bool,
     multiplayer_game: Option<MultiplayerGame>,
+    factory_game: Option<FactoryGame>,
+    sleigh_game: Option<SleighGame>,
+    breaker_game: Option<BreakerGame>,
+    stealth_game: Option<StealthGame>,
     // Game Setup State
     p1_name: String,
     p2_name: String,
@@ -56,6 +64,10 @@ impl GameState {
             transition_timer: 0,
             music_started: false,
             multiplayer_game: None,
+            factory_game: None,
+            sleigh_game: None,
+            breaker_game: None,
+            stealth_game: None,
             p1_name: "PLAYER 1".to_string(),
             p2_name: "PLAYER 2".to_string(),
             mp_duration: 3,
@@ -88,6 +100,10 @@ impl GameState {
                 AppState::MultiplayerLevelSelect => self.update_multiplayer_level_select(),
                 AppState::MultiplayerSetup => self.update_multiplayer_setup(),
                 AppState::Multiplayer => self.update_multiplayer(),
+                AppState::SinglePlayerFactory => self.update_single_player_factory(),
+                AppState::SinglePlayerSleigh => self.update_single_player_sleigh(),
+                AppState::SinglePlayerBreaker => self.update_single_player_breaker(),
+                AppState::SinglePlayerStealth => self.update_single_player_stealth(),
                 AppState::Developer => self.update_developer(),
             }
         }
@@ -134,7 +150,7 @@ impl GameState {
             if self.mode_selection % 2 != 0 { self.mode_selection -= 1; }
         }
         if gamepad::get(0).down.just_pressed() {
-            if self.mode_selection < 4 { self.mode_selection += 2; }
+            if self.mode_selection < 2 { self.mode_selection += 2; }
         }
         if gamepad::get(0).up.just_pressed() {
             if self.mode_selection >= 2 { self.mode_selection -= 2; }
@@ -147,8 +163,90 @@ impl GameState {
         }
         
         // Select (TODO: Launch game)
+        // Select (Launch specific game)
         if gamepad::get(0).a.just_pressed() || gamepad::get(0).start.just_pressed() {
-             // For now just Log or do nothing, waiting for game implementation
+             if self.mode_selection == 0 { // Gift Packing
+                 self.factory_game = Some(FactoryGame::new());
+                 self.state = AppState::SinglePlayerFactory;
+                 self.transition_timer = 10;
+             } else if self.mode_selection == 1 { // Reindeer Training (Sleigh)
+                 self.sleigh_game = Some(SleighGame::new());
+                 self.state = AppState::SinglePlayerSleigh;
+                 self.transition_timer = 10;
+             } else if self.mode_selection == 2 { // Santa Breaker (Breaker)
+                 self.breaker_game = Some(BreakerGame::new());
+                 self.state = AppState::SinglePlayerBreaker;
+                 self.transition_timer = 10;
+             } else if self.mode_selection == 3 { // Silent Santa (Stealth)
+                 self.stealth_game = Some(StealthGame::new());
+                 self.state = AppState::SinglePlayerStealth;
+                 self.transition_timer = 10;
+             }
+             // Other modes not implemented yet
+        }
+    }
+    
+    fn update_single_player_factory(&mut self) {
+        let mut exit = false;
+        
+        if let Some(game) = &mut self.factory_game {
+            game.update();
+            
+            // Checks inside borrow scope
+            if gamepad::get(0).b.just_pressed() {
+                 exit = true;
+            }
+        }
+        
+        if exit {
+             self.state = AppState::SinglePlayer;
+             self.factory_game = None;
+             self.transition_timer = 10;
+        }
+    }
+
+    fn update_single_player_sleigh(&mut self) {
+        let mut exit = false;
+        if let Some(game) = &mut self.sleigh_game {
+            game.update();
+            if gamepad::get(0).b.just_pressed() {
+                 exit = true;   
+            }
+        }
+        if exit {
+            self.state = AppState::SinglePlayer;
+            self.sleigh_game = None;
+            self.transition_timer = 10;
+        }
+    }
+
+    fn update_single_player_breaker(&mut self) {
+        let mut exit = false;
+        if let Some(game) = &mut self.breaker_game {
+            game.update();
+            if gamepad::get(0).b.just_pressed() {
+                 exit = true;
+            }
+        }
+        if exit {
+            self.state = AppState::SinglePlayer;
+            self.breaker_game = None;
+            self.transition_timer = 10;
+        }
+    }
+
+    fn update_single_player_stealth(&mut self) {
+        let mut exit = false;
+        if let Some(game) = &mut self.stealth_game {
+            game.update();
+            if game.state == StealthState::Menu && gamepad::get(0).b.just_pressed() {
+                exit = true;
+            }
+        }
+        if exit {
+            self.state = AppState::SinglePlayer;
+            self.stealth_game = None;
+            self.transition_timer = 10;
         }
     }
     
@@ -324,6 +422,26 @@ impl GameState {
                      text!("Loading...", x = 200, y = 140, color = 0xFFFFFFFF);
                 }
             },
+            AppState::SinglePlayerFactory => {
+                if let Some(game) = &self.factory_game {
+                    game.draw();
+                }
+            },
+            AppState::SinglePlayerSleigh => {
+                if let Some(game) = &self.sleigh_game {
+                    game.draw();
+                }
+            },
+            AppState::SinglePlayerBreaker => {
+                if let Some(game) = &self.breaker_game {
+                    game.draw();
+                }
+            },
+            AppState::SinglePlayerStealth => {
+                if let Some(game) = &self.stealth_game {
+                    game.draw();
+                }
+            },
             AppState::Developer => self.draw_developer(),
         }
     }
@@ -370,7 +488,7 @@ impl GameState {
             
             let is_selected = self.mp_level_selection == i as u32;
             let color = if is_selected { 0x00FF00FF } else { 0x444444FF };
-            let bg = if is_selected { 0x222222FF } else { 0x000000FF };
+            let _bg = if is_selected { 0x222222FF } else { 0x000000FF };
             
             // Box
             rect!(x=x-2, y=y-2, w=(box_w+4) as u32, h=(box_h+4) as u32, color=color);
@@ -554,12 +672,12 @@ impl GameState {
         text!("Press X to Back", x = 20, y = 20, color = 0xAAAAAAFF);
 
         let modes = [
-            "Gift Packing", "Reindeer Training",
-            "Chimney Jump", "Cookie Madness",
-            "Bell Rush", "Snow Chaos"
-        ];
-        
-        let icons = ["🎁", "🦌", "🏠", "🍪", "🔔", "❄️"];
+        "Gift Packing", "Raindeer Rush",
+        "Santa Breaker", "Santa Mission",
+        "Bell Rush", "Snow Chaos"
+    ];
+    
+    let icons = ["🎁", "🦌", "🧱", "🕵️", "🔔", "❄️"];
 
         // 4. Grid Layout (Squares)
         let box_size = 60;
