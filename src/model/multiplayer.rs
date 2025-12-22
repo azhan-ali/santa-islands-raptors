@@ -116,6 +116,11 @@ pub struct MultiplayerGame {
     pub shuffle_timer: u32,
     pub is_shuffling: bool,
     pub shuffle_pause_timer: u32,
+    // Level 5 Specifics
+    pub dog_pos: (f32, f32),
+    pub dog_target: Option<u8>, // Player ID
+    pub dog_state: u8, // 0 = In Cage, 1 = Chasing
+    pub cage_pos: (f32, f32),
 }
 
 impl MultiplayerGame {
@@ -147,6 +152,10 @@ impl MultiplayerGame {
             shuffle_timer: 0,
             is_shuffling: false,
             shuffle_pause_timer: 0,
+            dog_pos: (30.0, 260.0),
+            dog_target: None,
+            dog_state: 0,
+            cage_pos: (30.0, 260.0),
         };
         game.init_level(level);
         game
@@ -187,16 +196,23 @@ impl MultiplayerGame {
         self.houses = vec![];
         self.obstacles = vec![];
         
-        // 1. Static Level 3 Obstacles (Wood Barriers) - Spawn FIRST to reserve space
+        // 1. Static Obstacles (Bridges / Barriers)
         if _level >= 3 {
-             // 2 Bridges: Centered at y=100 and y=200. Width ~28.
-             // Guards for Bridge 1 (y=100)
-             self.obstacles.push(Obstacle { x: 210.0, y: 88.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
-             self.obstacles.push(Obstacle { x: 280.0, y: 88.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
-             
-             // Guards for Bridge 2 (y=200)
-             self.obstacles.push(Obstacle { x: 210.0, y: 188.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
-             self.obstacles.push(Obstacle { x: 280.0, y: 188.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+             // Level 5: 4 Bridges Logic
+             if _level == 5 {
+                 // We don't need obstacle objects for the bridges themselves as they are just "safe zones" in the river code.
+                 // But we can add decorative posts or small blockers nearby if we want.
+                 // For now, clean map.
+             } else {
+                 // Level 3/4: Two Bridges
+                 // Guards for Bridge 1 (y=100)
+                 self.obstacles.push(Obstacle { x: 210.0, y: 88.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+                 self.obstacles.push(Obstacle { x: 280.0, y: 88.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+                 
+                 // Guards for Bridge 2 (y=200)
+                 self.obstacles.push(Obstacle { x: 210.0, y: 188.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+                 self.obstacles.push(Obstacle { x: 280.0, y: 188.0, w: 24.0, h: 24.0, respawn_timer: 0, kind: 1 });
+             }
         }
         
         // 2. Houses
@@ -208,7 +224,7 @@ impl MultiplayerGame {
              // Manually generate to assign teams
              let mut rng = random::u32();
              let mut placed_count = 0;
-             let target = if _level == 4 { 11 } else { 10 };
+             let target = if _level == 5 { 9 } else if _level >= 4 { 11 } else { 10 };
              let mut attempts = 0;
              
              while placed_count < target && attempts < 1000 {
@@ -218,8 +234,13 @@ impl MultiplayerGame {
                  rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
                  let hy = 40.0 + (rng % 180) as f32; // Keep somewhat upper for start?
                  
-                 // L3/L4 Checks (River)
-                 if hx > 236.0 && hx < 276.0 { continue; } // River
+                 // L3/L4/L5 Checks (River)
+                 if _level >= 3 {
+                     // Vertical River
+                     if hx > 236.0 && hx < 276.0 { continue; } 
+                     // Level 5 Horizontal River (124..164)
+                     if _level == 5 && hy > 124.0 && hy < 164.0 { continue; }
+                 }
                  
                  let mut safe = true;
                  for o in &self.obstacles {
@@ -236,21 +257,27 @@ impl MultiplayerGame {
                      let mut is_pow = false;
                      let mut g_timer = 0;
                      
-                     if _level == 4 && placed_count == 10 {
-                         // 11th House is Power House
-                         team = 0; // Neutral? Or maybe make it uncapturable for points? 
-                                   // Rules say "Power High Value House" releases gifts.
-                                   // Does it belong to a team? Probably Neutral (0) so anyone can visit?
-                                   // Or maybe it is just an object.
-                                   // Let's make it Team 0 (Neutral) and Uncapturable logic later.
+                     if _level == 5 && placed_count == 8 {
+                         // 9th House is Power House in Level 5
+                         team = 0;
+                         is_pow = true;
+                         g_timer = 15 * 60;
+                     } else if _level == 4 && placed_count == 10 {
+                         // 11th House is Power House in Level 4
+                         team = 0; 
                          is_pow = true;
                          g_timer = 15 * 60; // 15s initial timer
                      } else {
-                         team = if placed_count < 5 { 1 } else { 2 };
+                         // Teams
+                         if _level == 5 {
+                             team = if placed_count < 4 { 1 } else { 2 };
+                         } else {
+                             team = if placed_count < 5 { 1 } else { 2 };
+                         }
                      }
 
                      self.houses.push(House {
-                        x: hx, y: hy, points: 5, cooldown: 0,
+                        x: hx, y: hy, points: if is_pow { 0 } else { 5 }, cooldown: 0,
                         last_collected_by: None, last_collection_time: 0,
                         is_high_value: is_pow,
                         team: team,
@@ -302,6 +329,9 @@ impl MultiplayerGame {
                      if ox > 236.0 && ox < 276.0 {
                          safe = false; // Block bridge too
                      }
+                     if _level == 5 && oy > 124.0 && oy < 164.0 {
+                         safe = false;
+                     }
                 }
                 
                 // Avoid overlap with existing obstacles (Wood & Bombs)
@@ -317,8 +347,8 @@ impl MultiplayerGame {
             }
         }
         
-        // 4. Snowmen (Level 4 Specific)
-        if _level == 4 {
+        // 4. Snowmen (Level 4 & 5)
+        if _level >= 4 {
              let snowman_count = 5;
              let mut rng = random::u32();
              let mut attempts = 0;
@@ -333,6 +363,8 @@ impl MultiplayerGame {
                  
                  // River Check
                  if sx > 236.0 && sx < 276.0 { continue; }
+                 // L5 Horizontal
+                 if _level == 5 && sy > 124.0 && sy < 164.0 { continue; }
                  
                  let mut safe = true;
                  for h in &self.houses {
@@ -371,7 +403,10 @@ impl MultiplayerGame {
             let dy = (random::u32() % 260 + 10) as f32;
             
             // Level 3 Check: No trees in River Strip
-            if self.current_level >= 3 && dx > 236.0 && dx < 276.0 { continue; }
+            if self.current_level >= 3 {
+                 if dx > 236.0 && dx < 276.0 { continue; }
+                 if self.current_level == 5 && dy > 124.0 && dy < 164.0 { continue; }
+            }
             
             let mut safe = true;
             // Check Houses
@@ -404,7 +439,10 @@ impl MultiplayerGame {
                 let dx = (random::u32() % 500 + 10) as f32;
                 let dy = (random::u32() % 260 + 10) as f32;
                 
-                if self.current_level >= 3 && dx > 236.0 && dx < 276.0 { continue; }
+                if self.current_level >= 3 {
+                     if dx > 236.0 && dx < 276.0 { continue; }
+                     if self.current_level == 5 && dy > 124.0 && dy < 164.0 { continue; }
+                }
                 
                 let mut safe = true;
                 // Check Houses
@@ -506,6 +544,7 @@ impl MultiplayerGame {
                      // Level 3 River Strip
                      if safe && self.current_level >= 3 {
                          if px > 236.0 && px < 276.0 { safe = false; }
+                         if self.current_level == 5 && py > 124.0 && py < 164.0 { safe = false; }
                      }
                      
                      // 4. Not on Obstacles
@@ -607,7 +646,8 @@ impl MultiplayerGame {
 
             for player in self.players.iter_mut() {
                  let dist = ((player.x - house.x).powi(2) + (player.y - house.y).powi(2)).sqrt();
-                 if dist < (player.radius + 12.0) && house.cooldown == 0 {
+                 // Power House (High Value) cannot be collected/captured
+                 if dist < (player.radius + 12.0) && house.cooldown == 0 && !house.is_high_value {
                         // Check Team (Level 3)
                         let is_wrong_team = self.current_level >= 3 && (
                             (house.team == 1 && player.id != 1) || 
@@ -799,8 +839,8 @@ impl MultiplayerGame {
         }
         self.floating_texts.retain(|t| t.life > 0);
         
-        // Level 4: Snowman Collision & Power House Logic
-        if self.current_level == 4 {
+        // Level 4 & 5: Snowman Collision & Power House Logic
+        if self.current_level >= 4 {
              for p in self.players.iter_mut() {
                  if p.invuln_timer > 0 { continue; }
                  
@@ -835,7 +875,9 @@ impl MultiplayerGame {
                          h.gift_timer -= 1;
                      } else {
                          // Spawn Risky Gift!
-                         h.gift_timer = 15 * 60; // Reset 15s
+                         // Level 5: 8s, Level 4: 15s
+                         let timer_reset = if self.current_level == 5 { 8 * 60 } else { 15 * 60 };
+                         h.gift_timer = timer_reset;
                          
                          // Determine Effect (+60 or -60)
                          let is_good = (random::u32() % 2) == 0;
@@ -851,6 +893,7 @@ impl MultiplayerGame {
                          });
                          
                          // Trigger Teleport
+                         // Level 5: Check overlap with Dog/Cage too
                          new_house_pos = Some((0.0, 0.0)); // Placeholder to trigger logic below
                          house_idx = i;
                      }
@@ -871,7 +914,8 @@ impl MultiplayerGame {
                      let ny = 40.0 + (rng % 208) as f32;
                      
                      // River Check
-                     if nx > 236.0 && nx < 276.0 { continue; }
+                      if nx > 236.0 && nx < 276.0 { continue; }
+                      if self.current_level == 5 && ny > 124.0 && ny < 164.0 { continue; }
                      
                      let mut safe = true;
                      for o in &self.obstacles {
@@ -904,6 +948,80 @@ impl MultiplayerGame {
                  }
              }
         }
+
+
+         // Level 5: Dog Logic
+         if self.current_level == 5 {
+             if let Some(target_id) = self.dog_target {
+                 self.dog_state = 1; // Chasing
+                 
+                 // Find Target
+                 let target_pos = if let Some(p) = self.players.iter().find(|p| p.id == target_id) {
+                     Some((p.x, p.y))
+                 } else { None };
+                 
+                 if let Some((tx, ty)) = target_pos {
+                      let dx = tx - self.dog_pos.0;
+                      let dy = ty - self.dog_pos.1;
+                      let dist = (dx*dx + dy*dy).sqrt();
+                      
+                      if dist > 5.0 {
+                          let speed = 2.8; // Fast
+                          let vx = (dx / dist) * speed;
+                          let vy = (dy / dist) * speed;
+                          
+                          let next_x = self.dog_pos.0 + vx;
+                          let next_y = self.dog_pos.1 + vy;
+                          
+                     // Dog Physics (Rivers)
+                          // Dog can cross bridges (handled by is_in_water returning false there)
+                          // Dog acts like player for terrain
+                          let mut dog_moved = false;
+                          if !self.is_in_water(next_x, next_y) {
+                               self.dog_pos.0 = next_x;
+                               self.dog_pos.1 = next_y;
+                               dog_moved = true;
+                          } else {
+                               // Slide (Simple)
+                               if !self.is_in_water(next_x, self.dog_pos.1) { self.dog_pos.0 = next_x; dog_moved = true; }
+                               else if !self.is_in_water(self.dog_pos.0, next_y) { self.dog_pos.1 = next_y; dog_moved = true; }
+                          }
+                      }
+                      
+                      // Catch Player? (Always check, regardless of movement)
+                      if dist < 20.0 {
+                           // Immediate Bite & Reset
+                           if let Some(p) = self.players.iter_mut().find(|p| p.id == target_id) {
+                               // -100 Score
+                               if p.score >= 100 { p.score -= 100; } else { p.score = 0; }
+                               
+                               // Visuals & Sound
+                               self.floating_texts.push(FloatingText { x: p.x, y: p.y - 30.0, text: "-100".to_string(), color: 0xFF0000FF, life: 60 });
+                               self.floating_texts.push(FloatingText { x: p.x, y: p.y - 45.0, text: "CHOMP!".to_string(), color: 0xFF0000FF, life: 60 });
+                               turbo::audio::play("hit"); 
+                               
+                               // Reset Dog
+                               self.dog_target = None;
+                               self.dog_state = 0; // Return
+                           }
+                      }
+                 }
+             } else {
+                 self.dog_state = 0; // Return to Cage
+                 let (cx, cy) = self.cage_pos;
+                 let dx = cx - self.dog_pos.0;
+                 let dy = cy - self.dog_pos.1;
+                 let dist = (dx*dx + dy*dy).sqrt();
+                 
+                 if dist > 5.0 {
+                     let speed = 3.0;
+                     let vx = (dx / dist) * speed;
+                     let vy = (dy / dist) * speed;
+                     self.dog_pos.0 += vx;
+                     self.dog_pos.1 += vy;
+                 }
+             }
+         }
         
         
         // Powerup Interaction
@@ -947,11 +1065,25 @@ impl MultiplayerGame {
                              player.score += val as u32;
                              text_col = 0xFFD700FF; // Gold
                              text_str = format!("+{}", val);
+                             
+                             // Bonus: Stop Dog if being chased
+                             if self.current_level == 5 && self.dog_target == Some(player.id) {
+                                 self.dog_target = None;
+                                 self.floating_texts.push(FloatingText { x: player.x, y: player.y - 30.0, text: "SAFE!".to_string(), color: 0x00FF00FF, life: 60 });
+                             }
+                             
                          } else {
                              let pen = (-val) as u32;
                              player.score = player.score.saturating_sub(pen);
                              text_col = 0xFF0000FF; // Red
                              text_str = format!("{}", val);
+                             
+                             // Penalty: Start Dog Chase (Level 5)
+                             if self.current_level == 5 {
+                                 self.dog_target = Some(player.id);
+                                 self.floating_texts.push(FloatingText { x: player.x, y: player.y - 30.0, text: "RUN!".to_string(), color: 0xFF0000FF, life: 60 });
+                                 turbo::audio::play("sleigh_bells"); // Alert sound
+                             }
                          }
                          
                          self.floating_texts.push(FloatingText {
@@ -1152,6 +1284,7 @@ impl MultiplayerGame {
                              // Level 3 Check: Water (Strict Ban on entire strip including bridges)
                              if self.current_level >= 3 {
                                  if ox > 236.0 && ox < 276.0 { safe = false; } // Ban entire strip
+                                 if self.current_level == 5 && oy > 124.0 && oy < 164.0 { safe = false; }
                              }
                              
                              if safe {
@@ -1211,12 +1344,34 @@ impl MultiplayerGame {
     }
     
     fn is_in_water(&self, x: f32, y: f32) -> bool {
+        // Vertical River (236..276)
         if x > 236.0 && x < 276.0 {
-            // Bridge 1 Safe Zone (y: 86..114)
-            if y > 86.0 && y < 114.0 { return false; }
-            // Bridge 2 Safe Zone (y: 186..214)
-            if y > 186.0 && y < 214.0 { return false; }
+            // Level 3/4 Bridges
+            if self.current_level >= 3 && self.current_level < 5 {
+                if y > 86.0 && y < 114.0 { return false; }
+                if y > 186.0 && y < 214.0 { return false; }
+            }
+            // Level 5: 4 Strategic Bridges
+            if self.current_level == 5 {
+                // Vertical Crossing Bridges
+                // Top: y=50..78 (Safe 50-78)
+                if y > 50.0 && y < 78.0 { return false; }
+                // Bot: y=210..238 (Safe 210-238)
+                if y > 210.0 && y < 238.0 { return false; }
+            }
             return true;
+        }
+        // Horizontal River (Level 5) (124..164)
+        if self.current_level == 5 {
+            if y > 124.0 && y < 164.0 {
+                 // Horizontal Crosisng Bridges
+                 // Left: x=100..128
+                 if x > 100.0 && x < 128.0 { return false; }
+                 // Right: x=380..408
+                 if x > 380.0 && x < 408.0 { return false; }
+                 
+                 return true;
+            }
         }
         false
     }
@@ -1418,11 +1573,13 @@ impl MultiplayerGame {
         let s1 = self.players[0].score;
         let s2 = self.players[1].score;
         if s1 > s2 {
-            self.winner_text = "SANTA WINS!".to_string();
+            let p = &self.players[0];
+            self.winner_text = format!("{} Wins!", p.name.to_uppercase());
         } else if s2 > s1 {
-            self.winner_text = "RIVAL WINS!".to_string();
+            let p = &self.players[1];
+            self.winner_text = format!("{} Wins!", p.name.to_uppercase());
         } else {
-            self.winner_text = "DRAW!".to_string();
+            self.winner_text = "MATCH DRAW!".to_string();
         }
     }
 
@@ -1435,15 +1592,78 @@ impl MultiplayerGame {
             // Vertical Water Strip
             rect!(x=236, y=0, w=40, h=288, color=0x29B6F6FF); 
             
+            // Level 5: Horizontal Water Strip
+            if self.current_level == 5 {
+                rect!(x=0, y=124, w=512, h=40, color=0x29B6F6FF); 
+                
+                // 4 Bridges (Top, Bottom, Left, Right of Center)
+                // Center is approx (256, 144)
+                // Vertical River: 236..276. Horizontal River: 124..164.
+                
+                // 1. Top Bridge (Crosses Horizontal River verticaly)
+                // Position: x=256(center of bridge w=24), y=hub centered? No, bridges crossing TO center or FROM center?
+                // User said: "Har side se sirf ek‑ek bridge add karo" (One bridge from each side).
+                // "Har quadrant ka sirf 1 bridge exit ho"
+                // This implies connecting the 4 quadrants to the center, or across?
+                // Let's place bridges connecting the quadrants across the rivers.
+                
+                // Let's do a Diamond formation around the center?
+                // Bridge 1: Connects Top-Left to Top-Right? No, vertical river.
+                // Let's place 4 bridges crossing the rivers near the center.
+                
+                // Top Bridge (Vertical, crossing Horizontal River) - Safe passage x=210, y=?
+                // Wait, rivers are + shape.
+                // Bridges need to cross the water.
+                
+                // Design:
+                // 1. Top Bridge (Crosses Horizontal River at x=150?) 
+                //    Connects Top-Left <-> Bot-Left? No that's vertical crossing.
+                //    Connects Top-Left <-> Top-Rigth? (Crosses Vertical River)
+                
+                // Let's place 4 Bridges crossing the rivers in a pattern.
+                // Top Bridge: Crosses Vertical River at y=60. (Connects Q1-Q2)
+                // Bot Bridge: Crosses Vertical River at y=220. (Connects Q3-Q4)
+                // Left Bridge: Crosses Horizontal River at x=120. (Connects Q1-Q3)
+                // Right Bridge: Crosses Horizontal River at x=390. (Connects Q2-Q4)
+                
+                // Draw Bridges
+                
+                // 1. Top Bridge (Vertical River Crossing)
+                rect!(x=236, y=50, w=40, h=28, color=0x8D6E63FF); 
+                rect!(x=236, y=48, w=40, h=2, color=0x5D4037FF); 
+                rect!(x=236, y=78, w=40, h=2, color=0x5D4037FF);
+                
+                // 2. Bottom Bridge (Vertical River Crossing)
+                rect!(x=236, y=210, w=40, h=28, color=0x8D6E63FF); 
+                rect!(x=236, y=208, w=40, h=2, color=0x5D4037FF); 
+                rect!(x=236, y=238, w=40, h=2, color=0x5D4037FF);
+                
+                // 3. Left Bridge (Horizontal River Crossing)
+                // Rotated Bridge? Rect w/h swapped.
+                // River is y=124..164 (h=40). Bridge needs to be h=40, w=28.
+                rect!(x=100, y=124, w=28, h=40, color=0x8D6E63FF);
+                rect!(x=98, y=124, w=2, h=40, color=0x5D4037FF);
+                rect!(x=128, y=124, w=2, h=40, color=0x5D4037FF);
+                
+                // 4. Right Bridge (Horizontal River Crossing)
+                rect!(x=380, y=124, w=28, h=40, color=0x8D6E63FF);
+                rect!(x=378, y=124, w=2, h=40, color=0x5D4037FF);
+                rect!(x=408, y=124, w=2, h=40, color=0x5D4037FF);
+            }
+            
             // Bridge 1 (Top)
-            rect!(x=236, y=100, w=40, h=28, color=0x8D6E63FF); 
-            rect!(x=236, y=98, w=40, h=2, color=0x5D4037FF); 
-            rect!(x=236, y=128, w=40, h=2, color=0x5D4037FF);
+            if self.current_level != 5 {
+                rect!(x=236, y=100, w=40, h=28, color=0x8D6E63FF); 
+                rect!(x=236, y=98, w=40, h=2, color=0x5D4037FF); 
+                rect!(x=236, y=128, w=40, h=2, color=0x5D4037FF);
+            }
             
             // Bridge 2 (Bot)
-            rect!(x=236, y=200, w=40, h=28, color=0x8D6E63FF); 
-            rect!(x=236, y=198, w=40, h=2, color=0x5D4037FF); 
-            rect!(x=236, y=228, w=40, h=2, color=0x5D4037FF);
+            if self.current_level != 5 {
+                 rect!(x=236, y=200, w=40, h=28, color=0x8D6E63FF); 
+                 rect!(x=236, y=198, w=40, h=2, color=0x5D4037FF); 
+                 rect!(x=236, y=228, w=40, h=2, color=0x5D4037FF);
+            }
         }
         
          // Draw Shadows (Level 3)
@@ -1508,55 +1728,99 @@ impl MultiplayerGame {
             let active = h.cooldown == 0;
             
             // Draw Procedural House
-            // ... (Code same as before, omitted changes)
-            
             // Draw Glow if active (Soft blue glow instead of pulsing yellow)
             if active {
                  let glow_col = if h.is_high_value { 0xFFD70044 } else { 0x00E5FF22 }; // Gold glow for Power House
                  circ!(x=x, y=y, d=32, color=glow_col); 
             }
             
-            // ... (Procedural House Drawing Block - Same as existing, assume preserved by context match or manual re-insertion if needed. Wait, ReplaceFileContent replaces everything in range. I need to include the House Draw logic or use a generic "Draw House" comment if I don't want to rewrite it.
-            // Actually, I should rewrite the House Draw logic to be safe, or select a smaller chunk range.
-            // The previous chunk was huge. Let's target the "Floating Points" section specifically?)
-            
-            // RE-INSERTING PROCEDURAL HOUSE LOGIC (Compressed for tool limit):
-            let w = 24; let h_body = 18;
-            let (wall_c, roof_c) = if h.team == 1 {
-                 (0xB71C1CFF, 0xFFEBEEFF) // Red Wall, White Roof
-            } else if h.team == 2 {
-                 (0x0277BDFF, 0xE1F5FEFF) // Blue Wall, Cyan Roof
-            } else {
-                 (0xB22222FF, 0xFFFFFFFF) // Neutral
-            };
-
-            let wall_color = if active { wall_c } else { 0x444444FF };
-            let roof_color = if active { roof_c } else { 0x777777FF };
-            let door_color = if active { 0x5D4037FF } else { 0x222222FF };
-            let win_color = if active { 0xFFD700FF } else { 0x333300FF };
-            rect!(x=x-w/2, y=y-h_body/2, w=w as u32, h=h_body as u32, color=wall_color);
-            rect!(x=x-4, y=y+h_body/2-10, w=8, h=10, color=door_color);
-            rect!(x=x-9, y=y-3, w=4, h=5, color=win_color);
-            rect!(x=x+5, y=y-3, w=4, h=5, color=win_color);
-            let rx = x-w/2; let ry = y-h_body/2;
-            rect!(x=rx-2, y=ry-4, w=(w+4) as u32, h=4, color=roof_color);
-            rect!(x=rx+2, y=ry-8, w=(w-4) as u32, h=4, color=roof_color);
-            rect!(x=rx+6, y=ry-12, w=(w-12) as u32, h=4, color=roof_color);
-            rect!(x=x+6, y=ry-14, w=4, h=10, color=if active { 0x8B4513FF } else { 0x333333FF });
-            rect!(x=x+5, y=ry-16, w=6, h=2, color=roof_color);
-            
-            // High Value Indicator
+            // Draw Logic
             if h.is_high_value {
-                // Gold star or roof
-                 rect!(x=rx-2, y=ry-4, w=(w+4) as u32, h=4, color=0xFFD700FF); // Gold Roof
-                 // "100" text above if active
-                 if active {
-                     text!("100", x=x-8, y=y-35, font="small", color=0xFFD700FF);
-                 }
+                // SPECIAL "POWER HOUSE" DESIGN (Golden/Crystal Treasury)
+                // Distinctive shape: Wider base, central tower, gold/purple colors
+                
+                let base_w = 32;
+                let base_h = 20;
+                let bx = x - base_w/2;
+                let by = y - base_h/2;
+                
+                // 1. Base (White Marble with Gold Trim)
+                rect!(x=bx, y=by, w=base_w as u32, h=base_h as u32, color=0xF5F5F5FF); // White Marble
+                rect!(x=bx, y=by+base_h-4, w=base_w as u32, h=4, color=0xFFD700FF); // Gold Base Trim
+                
+                // Columns (Gold)
+                rect!(x=bx+2, y=by, w=4, h=base_h as u32, color=0xFFC107FF);
+                rect!(x=bx+base_w-6, y=by, w=4, h=base_h as u32, color=0xFFC107FF);
+                rect!(x=bx+(base_w/2)-2, y=by, w=4, h=base_h as u32, color=0xFFC107FF);
+                
+                // Door (Royal Purple)
+                rect!(x=x-6, y=by+8, w=12, h=12, color=0x7B1FA2FF);
+                // Arch top
+                rect!(x=x-6, y=by+6, w=12, h=2, color=0xAB47BCFF); // Lighter purple top
+                
+                // 2. Main Roof (Purple Sloped)
+                let rx = bx - 2;
+                let ry = by - 6;
+                rect!(x=rx, y=ry, w=(base_w+4) as u32, h=6, color=0x4A148CFF); // Dark Purple
+                rect!(x=rx+2, y=ry-2, w=(base_w) as u32, h=2, color=0x7B1FA2FF); // Mid Purple
+                
+                // 3. Central Tower (Gold/Crystal)
+                let tw = 14;
+                let th = 12;
+                let tx = x - tw/2;
+                let ty = ry - th;
+                rect!(x=tx, y=ty, w=tw as u32, h=th as u32, color=0xFFECB3FF); // Light Gold/Cream
+                
+                // Tower Window (Cyan/Diamond)
+                rect!(x=x-3, y=ty+3, w=6, h=6, color=0x00E5FFFF); // Glowing Cyan
+                
+                // Tower Roof (Spire)
+                rect!(x=tx-2, y=ty-4, w=(tw+4) as u32, h=4, color=0xFFD700FF); // Gold Base
+                rect!(x=tx+2, y=ty-8, w=(tw-4) as u32, h=4, color=0xFFD700FF); // Gold Mid
+                rect!(x=x-2, y=ty-12, w=4, h=4, color=0xFFD700FF); // Gold Peak
+                
+                // Flag / Diamond on Top
+                let anim_y = ((self.frame_count / 10) % 2) as i32;
+                rect!(x=x-1, y=ty-14+anim_y, w=2, h=2, color=0x00E5FFFF); // Floating Gem
+                
+                // Wings / Side Towers (Small)
+                rect!(x=bx-4, y=by, w=4, h=12, color=0xF5F5F5FF);
+                rect!(x=bx-5, y=by-3, w=6, h=3, color=0x7B1FA2FF); // Roof
+                
+                rect!(x=bx+base_w, y=by, w=4, h=12, color=0xF5F5F5FF);
+                rect!(x=bx+base_w-1, y=by-3, w=6, h=3, color=0x7B1FA2FF); // Roof
+
+
+            } else {
+                // STANDARD HOUSE DESIGN (Existing)
+                let w = 24; let h_body = 18;
+                let (wall_c, roof_c) = if h.team == 1 {
+                     (0xB71C1CFF, 0xFFEBEEFF) // Red Wall, White Roof
+                } else if h.team == 2 {
+                     (0x0277BDFF, 0xE1F5FEFF) // Blue Wall, Cyan Roof
+                } else {
+                     (0xB22222FF, 0xFFFFFFFF) // Neutral
+                };
+
+                let wall_color = if active { wall_c } else { 0x444444FF };
+                let roof_color = if active { roof_c } else { 0x777777FF };
+                let door_color = if active { 0x5D4037FF } else { 0x222222FF };
+                let win_color = if active { 0xFFD700FF } else { 0x333300FF };
+                rect!(x=x-w/2, y=y-h_body/2, w=w as u32, h=h_body as u32, color=wall_color);
+                rect!(x=x-4, y=y+h_body/2-10, w=8, h=10, color=door_color);
+                rect!(x=x-9, y=y-3, w=4, h=5, color=win_color);
+                rect!(x=x+5, y=y-3, w=4, h=5, color=win_color);
+                let rx = x-w/2; let ry = y-h_body/2;
+                rect!(x=rx-2, y=ry-4, w=(w+4) as u32, h=4, color=roof_color);
+                rect!(x=rx+2, y=ry-8, w=(w-4) as u32, h=4, color=roof_color);
+                rect!(x=rx+6, y=ry-12, w=(w-12) as u32, h=4, color=roof_color);
+                rect!(x=x+6, y=ry-14, w=4, h=10, color=if active { 0x8B4513FF } else { 0x333333FF });
+                rect!(x=x+5, y=ry-16, w=6, h=2, color=roof_color);
             }
 
             // Floating Points Indicator (Festive Board - White Text & Snowflakes)
-            if active {
+            // Only for Normal Houses
+            if active && !h.is_high_value {
                  let label = format!("+{}", h.points);
                  let bob = (self.frame_count as f32 * 0.1).sin() * 2.0;
 
@@ -1877,6 +2141,87 @@ impl MultiplayerGame {
             
             // Label (Optional, maybe remove if too cluttered, or keep small)
             // text!(if is_santa{"P1"}else{"P2"}, x=x-6, y=ty-20, font="small", color=0xFFFFFFFF);
+        }
+        
+        // Level 5: Dog & Cage
+        if self.current_level == 5 {
+            // Cage
+            let cx = self.cage_pos.0 as i32;
+            let cy = self.cage_pos.1 as i32;
+            
+            // Back bars
+            rect!(x=cx-10, y=cy-10, w=20, h=20, color=0x424242FF);
+            for i in (0..20).step_by(4) {
+                rect!(x=cx-10+i, y=cy-10, w=2, h=20, color=0x212121FF);
+            }
+            rect!(x=cx-12, y=cy-12, w=24, h=2, color=0x000000FF); // Roof
+            
+            // Improved Arcade Dog Sprite
+            // Body: Tan/Brown
+            let facing_right = if let Some(tid) = self.dog_target {
+                 if let Some(p) = self.players.iter().find(|p| p.id == tid) { p.x > self.dog_pos.0 } else { true }
+            } else { true };
+            
+            let color_fur = 0x8D6E63FF;
+            let color_dark = 0x5D4037FF;
+            
+            let dx = self.dog_pos.0 as i32;
+            let dy = self.dog_pos.1 as i32;
+
+
+            if facing_right {
+                // Body
+                rect!(x=dx-7, y=dy-3, w=14, h=8, color=color_fur);
+                // Head
+                rect!(x=dx+4, y=dy-8, w=7, h=7, color=color_fur);
+                // Ears
+                rect!(x=dx+5, y=dy-10, w=2, h=3, color=color_dark);
+                rect!(x=dx+9, y=dy-10, w=2, h=3, color=color_dark);
+                // Snout
+                rect!(x=dx+10, y=dy-5, w=3, h=3, color=color_dark);
+                // Tail (Wags)
+                let tail_wag = ((self.frame_count / 5) % 2) as i32 * 2;
+                rect!(x=dx-9, y=dy-4+tail_wag, w=3, h=2, color=color_dark);
+                
+                // Legs (Anim)
+                let leg_anim = ((self.frame_count / 4) % 2) as i32 * 3;
+                if self.dog_state == 1 {
+                    rect!(x=dx-6+leg_anim, y=dy+5, w=3, h=5, color=color_dark);
+                    rect!(x=dx+2-leg_anim, y=dy+5, w=3, h=5, color=color_dark);
+                } else {
+                    rect!(x=dx-6, y=dy+5, w=3, h=5, color=color_dark);
+                    rect!(x=dx+4, y=dy+5, w=3, h=5, color=color_dark);
+                }
+            } else {
+                // Facing Left (Mirror)
+                // Body
+                rect!(x=dx-7, y=dy-3, w=14, h=8, color=color_fur);
+                // Head
+                rect!(x=dx-11, y=dy-8, w=7, h=7, color=color_fur);
+                // Ears
+                rect!(x=dx-10, y=dy-10, w=2, h=3, color=color_dark);
+                rect!(x=dx-6, y=dy-10, w=2, h=3, color=color_dark);
+                // Snout
+                rect!(x=dx-13, y=dy-5, w=3, h=3, color=color_dark);
+                 // Tail (Wags)
+                let tail_wag = ((self.frame_count / 5) % 2) as i32 * 2;
+                rect!(x=dx+6, y=dy-4+tail_wag, w=3, h=2, color=color_dark);
+                
+                // Legs (Anim)
+                let leg_anim = ((self.frame_count / 4) % 2) as i32 * 3;
+                if self.dog_state == 1 {
+                    rect!(x=dx-6+leg_anim, y=dy+5, w=3, h=5, color=color_dark);
+                    rect!(x=dx+2-leg_anim, y=dy+5, w=3, h=5, color=color_dark);
+                } else {
+                    rect!(x=dx-6, y=dy+5, w=3, h=5, color=color_dark);
+                    rect!(x=dx+4, y=dy+5, w=3, h=5, color=color_dark);
+                }
+            }
+
+            // Angry Status
+            if self.dog_state == 1 {
+                text!("!", x=dx, y=dy-15, font="small", color=0xFF0000FF);
+            }
         }
         
         // HUD Starts Here (Obstacles Loop Removed from here)
