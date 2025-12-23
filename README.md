@@ -97,8 +97,6 @@ Grab a friend for local 2-player chaos!
 
 ---
 
-<<<<<<< HEAD
-*Made with ❤️ by [Your Name]*
 =======
 *Made with ❤️ by Aarif Khan & Azhan Ali*
 >>>>>>> 634227ef7572bcd8aef77027fdec0134cef13ca7
