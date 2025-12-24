@@ -312,7 +312,7 @@ impl MultiplayerGame {
             
             let current_obs_count = self.obstacles.len();
 
-            while (self.obstacles.len() - current_obs_count) < bomb_target && attempts < 100 {
+            while (self.obstacles.len() - current_obs_count) < bomb_target && attempts < 1000 {
                 attempts += 1;
                 rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
                 let ox = 60.0 + (rng % 392) as f32; 
@@ -342,7 +342,9 @@ impl MultiplayerGame {
                 }
                 
                 if safe {
-                    self.obstacles.push(Obstacle { x: ox, y: oy, w: 24.0, h: 24.0, respawn_timer: 0, kind: 0 }); // Kind 0 = Bomb
+                    // Respawn timer: Random 5s to 15s (300-900 frames) so they don't all move at once
+                    let timer = if _level >= 2 { (random::u32() % 600) + 300 } else { 0 };
+                    self.obstacles.push(Obstacle { x: ox, y: oy, w: 24.0, h: 24.0, respawn_timer: timer, kind: 0 }); // Kind 0 = Bomb
                 }
             }
         }
@@ -492,6 +494,76 @@ impl MultiplayerGame {
         }
         if self.timer == 0 {
             self.end_game();
+        }
+
+        if self.timer == 0 {
+            self.end_game();
+        }
+        
+        // Dynamic Bomb Logic (Level 2 & 3 & 4)
+        if self.current_level >= 2 {
+            let mut bombs_to_move = vec![];
+            for (i, o) in self.obstacles.iter_mut().enumerate() {
+                if o.kind == 0 { // Bomb
+                    if o.respawn_timer > 0 {
+                        o.respawn_timer -= 1;
+                    } 
+                    if o.respawn_timer == 0 {
+                        bombs_to_move.push(i);
+                        // Reset timer immediately to avoid double add (will be overwritten on success)
+                         o.respawn_timer = (random::u32() % 600) + 300;
+                    }
+                }
+            }
+            
+            for i in bombs_to_move {
+                 let mut rng = random::u32();
+                 let mut attempts = 0;
+                 let mut placed = false;
+                 
+                 while !placed && attempts < 50 {
+                     attempts += 1;
+                     rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                     let nx = 60.0 + (rng % 392) as f32;
+                     rng = (rng.wrapping_mul(1103515245).wrapping_add(12345)) % 2147483648;
+                     let ny = 60.0 + (rng % 168) as f32;
+                     
+                     // Safety Checks
+                     let mut safe = true;
+                     
+                     // 1. Houses
+                     for h in &self.houses {
+                        if ((h.x - nx).powi(2) + (h.y - ny).powi(2)).sqrt() < 50.0 { safe = false; break; }
+                     }
+                     // 2. Players
+                     if safe {
+                         for p in &self.players {
+                            if ((p.x - nx).powi(2) + (p.y - ny).powi(2)).sqrt() < 60.0 { safe = false; break; }
+                         }
+                     }
+                     // 3. Other Obstacles (prevent stacking)
+                     if safe {
+                         for (idx, o) in self.obstacles.iter().enumerate() {
+                             if i != idx {
+                                 if ((o.x - nx).powi(2) + (o.y - ny).powi(2)).sqrt() < 40.0 { safe = false; break; }
+                             }
+                         }
+                     }
+                     // 4. River (L3/L5)
+                     if safe && self.current_level >= 3 {
+                         if nx > 236.0 && nx < 276.0 { safe = false; }
+                         if self.current_level == 5 && ny > 124.0 && ny < 164.0 { safe = false; }
+                     }
+                     
+                     if safe {
+                         self.obstacles[i].x = nx;
+                         self.obstacles[i].y = ny;
+                         self.obstacles[i].respawn_timer = (random::u32() % 600) + 300; // Reset Timer
+                         placed = true;
+                         // Removed "Poof" particle effect to avoid confusion with explosion
+                     }
+                 }
+            }
         }
 
         // Spawn Powerups
@@ -1132,6 +1204,11 @@ impl MultiplayerGame {
          if self.current_level >= 3 {
              self.update_level3();
          }
+         
+         // Generic Obstacle Collision (Levels 2+)
+         if self.current_level >= 2 {
+             self.check_obstacle_collisions();
+         }
     }
     
     fn generate_random_houses(&mut self, count: usize, _avoid_special_zone: bool) {
@@ -1300,8 +1377,10 @@ impl MultiplayerGame {
                                      if ((dx - ox).powi(2) + (dy - oy).powi(2)).sqrt() < 40.0 { safe = false; break; }
                                  }
                              }
-                             if safe { o.x = ox; o.y = oy; placed = true; }
+                              if safe { o.x = ox; o.y = oy; placed = true; }
                          }
+                         // Reset timer on success or failure just to keep it moving
+                         o.respawn_timer = (random::u32() % 600) + 300;
                     }
                     continue;
                  }
@@ -1330,6 +1409,52 @@ impl MultiplayerGame {
                          // No respawn for wood
                          turbo::audio::play("hit"); 
                      }
+                }
+             }
+        }
+        
+        for (px, py, amount) in penalties {
+            self.floating_texts.push(FloatingText { x: px, y: py - 20.0, text: format!("-{}", amount), color: 0xFF0000FF, life: 60 });
+        }
+        for (ex, ey) in explosions {
+             turbo::audio::play("projectile_hit"); 
+             self.spawn_explosion(ex, ey);
+        }
+    }
+
+    fn check_obstacle_collisions(&mut self) {
+        let mut penalties = vec![];
+        let mut explosions = vec![];
+
+        for o in self.obstacles.iter_mut() {
+            // Skip moving (active timer) bombs? No, they are dangerous until teleported.
+            // Dead bombs are at -1000, so dist check fails automatically.
+
+            for p in self.players.iter_mut() {
+                if p.invuln_timer > 0 { continue; }
+                
+                // Hitbox (Circle vs Rect)
+                let closest_x = p.x.clamp(o.x, o.x + o.w);
+                let closest_y = p.y.clamp(o.y, o.y + o.h);
+                let dist_sq = (p.x - closest_x).powi(2) + (p.y - closest_y).powi(2);
+                
+                if dist_sq < (p.radius * p.radius) {
+                     p.invuln_timer = 60;
+                     if o.kind == 0 { // Bomb
+                         if p.score >= 20 { p.score -= 20; } else { p.score = 0; }
+                         penalties.push((p.x, p.y, 20)); // -20
+                         explosions.push((o.x + o.w/2.0, o.y + o.h/2.0));
+                         // Respawn logic: Hide and set timer
+                         o.respawn_timer = 30; 
+                         o.x = -1000.0;
+                     } else if o.kind == 1 { // Wood
+                         if p.score >= 10 { p.score -= 10; } else { p.score = 0; }
+                         penalties.push((p.x, p.y, 10)); // -10
+                         // No respawn for wood
+                         turbo::audio::play("hit"); 
+                     }
+                     // Snowman (Kind 2) logic is separate in update/L4 block usually, or can merge here.
+                     // Let's keep Snowman separate as it uses radius vs radius check in L4 block.
                 }
              }
         }
@@ -1873,7 +1998,10 @@ impl MultiplayerGame {
         
         // Obstacles (Moved here: Before Powerups/Players)
         for o in &self.obstacles {
-            if o.respawn_timer > 0 { continue; } 
+            // Bombs now use respawn_timer for dynamic movement, so we must draw them even if timer > 0.
+            // Dead bombs are moved to -1000, which is off-screen, so they naturally won't be seen.
+            // Only skip drawing if off-screen (which rect!/circ! handle, or we can check coords).
+            if o.x < -100.0 { continue; } 
             let x = o.x as i32; let y = o.y as i32; let w = o.w as i32; let h = o.h as i32;
             if o.kind == 0 { // Bomb
                 let bx = x - 1; let by = y - 1;
