@@ -8,3 +8,12 @@ coin = { source = "audio/projectile_hit.wav" }
 
 [sprite]
 house = { source = "sprites/house.png" }
+thumb_factory = { source = "sprites/thumb_factory.png" }
+thumb_sleigh = { source = "sprites/thumb_sleigh.png" }
+thumb_breaker = { source = "sprites/thumb_breaker.png" }
+thumb_stealth = { source = "sprites/thumb_stealth.png" }
+thumb_mp_lvl1 = { source = "sprites/thumb_mp_lvl1.png" }
+thumb_mp_lvl2 = { source = "sprites/thumb_mp_lvl2.png" }
+thumb_mp_lvl3 = { source = "sprites/thumb_mp_lvl3.png" }
+thumb_mp_lvl4 = { source = "sprites/thumb_mp_lvl4.png" }
+thumb_mp_lvl5 = { source = "sprites/thumb_mp_lvl5.png" }

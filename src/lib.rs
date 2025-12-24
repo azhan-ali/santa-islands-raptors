@@ -826,28 +826,43 @@ impl GameState {
             rect!(x=x-2, y=y-2, w=(box_w+4) as u32, h=(box_h+4) as u32, color=color);
             
             // Procedural Background
-            // User requested black background for all
             let bg_color = 0x000000FF; 
-            
             rect!(x=x, y=y, w=box_w as u32, h=box_h as u32, color=bg_color);
             
-            // Text
-            let num = format!("{}", i);
-            // Centering logic for the number inside the box
-            // box width 80. 'large' font is approx 8x16 or 16x16? Let's assume standard large is ~16px wide per char.
-            // 80 / 2 = 40. 16/2 = 8. -> x = x + 32.
-            text!(&num, x=x+32, y=y+20, font="large", color=0xFFFFFFFF);
-            
-            if is_selected {
-                text!("Level", x=x+20, y=y+45, font="small", color=0xAAAAAAFF);
+            // Thumbnail
+            let sprite_name = match i {
+                1 => "thumb_mp_lvl1",
+                2 => "thumb_mp_lvl2",
+                3 => "thumb_mp_lvl3",
+                4 => "thumb_mp_lvl4",
+                5 => "thumb_mp_lvl5",
+                _ => "",
+            };
+            if !sprite_name.is_empty() {
+                 sprite!(sprite_name, x=x, y=y, w=box_w as u32, h=box_h as u32);
             }
+            
+            // Level Label (Below Box)
+            let lvl_text = format!("Level {}", i);
+            // Center "Level X" (7 chars) under 80px box. Small font ~8px (actually small is smaller, say 6px).
+            // Let's assume font="small" width is roughly 6px. 7*6 = 42. (80-42)/2 = 19.
+            // Let's use generic centering for small font (approx 7px per char including spacing?)
+            let txt_len = lvl_text.len() as i32 * 4; // Est 4px width for small
+            let txt_x = x + (box_w / 2) - (txt_len / 2);
+            
+            let label_col = if is_selected { 0x00FF00FF } else { 0x888888FF };
+            text!(&lvl_text, x=txt_x, y=y+box_h+8, font="small", color=label_col);
         }
         
         // Text Instructions (Below Grid)
-        let grid_bottom = start_y + 2 * box_h + gap_y; // 65 + 120 + 20 = 205
+        let grid_bottom = start_y + 2 * box_h + gap_y + 20; 
         
-        text!("Press START to Continue", x=center_x("Press START to Continue", 8), y=grid_bottom + 15, font="medium", color=0xFFFFFFFF);
-        text!("Press X to Back", x=center_x("Press X to Back", 5), y=grid_bottom + 35, font="small", color=0xAAAAAAFF);
+        let msg_start = "Press START to Continue";
+        let msg_back = "Press X to Back";
+        
+        // Use 8px for medium to try centering better
+        text!(msg_start, x=center_x(msg_start, 8), y=grid_bottom + 15, font="medium", color=0xFFFFFFFF);
+        text!(msg_back, x=center_x(msg_back, 4), y=grid_bottom + 35, font="small", color=0xAAAAAAFF);
 
         // Subtitle (Bottom)
         let note = "(More exciting levels coming soon!)";
@@ -1040,8 +1055,22 @@ impl GameState {
             rect!(x = x, y = y, w = box_size as u32, h = box_size as u32, color = bg_color);
             
             // Draw Icon (Centered in box)
-            // Icon is text, so we estimate position
-            text!(icons[i], x = x + 20, y = y + 20, font = "large", color = 0xFFFFFFFF);
+            if i < 4 {
+                 let sprite_name = match i {
+                     0 => "thumb_factory",
+                     1 => "thumb_sleigh",
+                     2 => "thumb_breaker",
+                     3 => "thumb_stealth",
+                     _ => "",
+                 };
+                 // Draw sprite fitted to box (assuming sprite! supports w/h resizing or we rely on default)
+                 // If w/h not supported, this might fail or draw huge.
+                 // Safe bet: use `sprite!(name, x=x, y=y)` and hope for best? No, 1024px is huge.
+                 // Use `w` and `h` parameters if `sprite!` macro follows `rect!` convention.
+                 sprite!(sprite_name, x=x, y=y, w=box_size as u32, h=box_size as u32);
+            } else {
+                 text!(icons[i], x = x + 20, y = y + 20, font = "large", color = 0xFFFFFFFF);
+            }
             
             // Draw Mode Name (Below Box)
             // Center the text below the box
